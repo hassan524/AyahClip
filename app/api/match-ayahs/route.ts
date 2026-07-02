@@ -85,6 +85,26 @@ function filterHallucinatedWords(words: { word: string; start: number; end: numb
   return result;
 }
 
+// ---------- OPENING PHRASE DETECTION (Isti'adhah / Bismillah) ----------
+//
+// Reciters commonly begin with "أعوذ بالله من الشيطان الرجيم" (isti'adhah)
+// and/or "بسم الله الرحمن الرحيم" (Bismillah) before the actual ayah.
+// Neither is Quranic ayah text of the surah being recited (except in rare
+// cases like An-Naml 27:30 where Bismillah IS part of the ayah itself —
+// not handled here per user request to always strip it).
+//
+// Both phrases are detected and simply skipped (not added as timeline
+// entries), so the anchor-search below only ever sees real ayah text and
+// can't get confused by "بسم الله الرحمن الرحيم" appearing inside some
+// unrelated ayah (e.g. An-Naml 27:30) and stealing the match.
+
+const ISTIADHA_TEXT = 'أعوذ بالله من الشيطان الرجيم';
+
+function isIstiadhaChunk(words: { word: string }[]): boolean {
+  const chunk = words.map((w) => w.word).join(' ');
+  return getTextSimilarity(chunk, ISTIADHA_TEXT) >= 0.6;
+}
+
 // ---------- FUZZY MATCHING ----------
 
 // Minimum edit distance between two strings.
@@ -186,38 +206,34 @@ const MUQATTAAT_BY_SURAH: Record<
   2: { fused: 'الم', nextAyah: 2 },
   3: { fused: 'الم', nextAyah: 2 },
   7: { fused: 'المص', nextAyah: 2 },
-  10: { fused: 'الر', nextAyah: 1 }, // تم الإصلاح: الر جزء من الآية 1 وليست آية كاملة
-  11: { fused: 'الر', nextAyah: 1 }, // تم الإصلاح
-  12: { fused: 'الر', nextAyah: 1 }, // تم الإصلاح
-  13: { fused: 'المر', nextAyah: 1 }, // تم الإصلاح
-  14: { fused: 'الر', nextAyah: 1 }, // تم الإصلاح
-  15: { fused: 'الر', nextAyah: 1 }, // تم الإصلاح
+  10: { fused: 'الر', nextAyah: 1 },
+  11: { fused: 'الر', nextAyah: 1 },
+  12: { fused: 'الر', nextAyah: 1 },
+  13: { fused: 'المر', nextAyah: 1 },
+  14: { fused: 'الر', nextAyah: 1 },
+  15: { fused: 'الر', nextAyah: 1 },
   19: { fused: 'كهيعص', nextAyah: 2 },
   20: { fused: 'طه', nextAyah: 2 },
   26: { fused: 'طسم', nextAyah: 2 },
-  27: { fused: 'طس', nextAyah: 1 }, // تم الإصلاح
+  27: { fused: 'طس', nextAyah: 1 },
   28: { fused: 'طسم', nextAyah: 2 },
   29: { fused: 'الم', nextAyah: 2 },
   30: { fused: 'الم', nextAyah: 2 },
   31: { fused: 'الم', nextAyah: 2 },
   32: { fused: 'الم', nextAyah: 2 },
   36: { fused: 'يس', nextAyah: 2 },
-  38: { fused: 'ص', nextAyah: 1 }, // تم الإصلاح
+  38: { fused: 'ص', nextAyah: 1 },
   40: { fused: 'حم', nextAyah: 2 },
   41: { fused: 'حم', nextAyah: 2 },
-  // Surah 42: "حم" is ayah 1, "عسق" is its own ayah 2. Matched/displayed as
-  // one combined unit, then the loop resumes at ayah 3.
   42: { fused: 'حمعسق', display: 'حم عسق', nextAyah: 3 },
   43: { fused: 'حم', nextAyah: 2 },
   44: { fused: 'حم', nextAyah: 2 },
   45: { fused: 'حم', nextAyah: 2 },
   46: { fused: 'حم', nextAyah: 2 },
-  50: { fused: 'ق', nextAyah: 1 }, // تم الإصلاح
-  68: { fused: 'ن', nextAyah: 1 }, // تم الإصلاح: حرف ن جزء من الآية الأولى "ن والقلم وما يسطرون"
+  50: { fused: 'ق', nextAyah: 1 },
+  68: { fused: 'ن', nextAyah: 1 },
 };
 
-// Precompute the derived spoken-name concat string for each surah once,
-// so we're not re-deriving it on every request.
 const MUQATTAAT_ENTRIES = Object.entries(MUQATTAAT_BY_SURAH).map(([numStr, cfg]) => ({
   surahNumber: Number(numStr),
   fused: cfg.fused,
@@ -227,14 +243,10 @@ const MUQATTAAT_ENTRIES = Object.entries(MUQATTAAT_BY_SURAH).map(([numStr, cfg])
 }));
 
 const MUQATTAAT_MATCH_THRESHOLD = 0.68;
-const MUQATTAAT_MAX_WINDOW = 8; // max spoken words to try consuming
+const MUQATTAAT_MAX_WINDOW = 8;
 const MUQATTAAT_MIN_LEN_RATIO = 0.5;
 const MUQATTAAT_MAX_LEN_RATIO = 1.6;
 
-// Tries every window size (1..MUQATTAAT_MAX_WINDOW words) starting at
-// `startIdx`, concatenates those words with spaces stripped, and compares
-// the resulting character sequence against each surah's derived letter-name
-// sequence — completely independent of how Whisper happened to split words.
 function detectMuqattaat(
   wordStream: WordTs[],
   startIdx: number
@@ -254,7 +266,6 @@ function detectMuqattaat(
         .map((x) => x.word)
         .join('');
 
-      // Cheap length-based prefilter before running Levenshtein.
       const candNorm = normalize(candidateConcat);
       const refNorm = normalize(refConcat);
       if (!candNorm || !refNorm) continue;
@@ -301,7 +312,6 @@ type ResultAyah = {
 
 // ---------- HELPERS ----------
 
-// Search the whole Quran for the ayah that best matches a spoken text snippet.
 function searchCandidates(
   segmentText: string,
   candidates: AyahCandidate[],
@@ -320,7 +330,6 @@ function searchCandidates(
   return best;
 }
 
-// Flatten surah->ayahs structure into one big searchable array.
 function buildAllCandidates(surahsList: any[]): AyahCandidate[] {
   const all: AyahCandidate[] = [];
   for (const surah of surahsList) {
@@ -331,7 +340,6 @@ function buildAllCandidates(surahsList: any[]): AyahCandidate[] {
   return all;
 }
 
-// Build a fast "surah:ayah" -> translation string lookup map.
 function buildTranslationMap(translationSurahs: any[]): Map<string, string> {
   const map = new Map<string, string>();
   for (const surah of translationSurahs || []) {
@@ -342,20 +350,11 @@ function buildTranslationMap(translationSurahs: any[]): Map<string, string> {
   return map;
 }
 
-// Returns true if the first few spoken words sound like the Bismillah.
 function isBismillahChunk(words: WordTs[]): boolean {
   const chunk = words.map((w) => w.word).join(' ');
   return getTextSimilarity(chunk, 'بسم الله الرحمن الرحيم') >= 0.6;
 }
 
-// Returns true if the consumed words reach the last word of the canonical ayah.
-function reachedAyahEnd(consumedWords: WordTs[], ayahWords: string[]): boolean {
-  if (!ayahWords.length || !consumedWords.length) return false;
-  const lastAyahWord = ayahWords[ayahWords.length - 1];
-  return consumedWords.slice(-3).some((w) => getWordSimilarity(w.word, lastAyahWord) > 0.7);
-}
-
-// How many Arabic words should sit on one display line, based on ayah length.
 function estimateArabicChunkSize(wordsCount: number): number {
   if (wordsCount <= 8) return wordsCount;
   if (wordsCount <= 12) return 6;
@@ -364,16 +363,12 @@ function estimateArabicChunkSize(wordsCount: number): number {
   return 9;
 }
 
-// Splits the English translation into N portions, preferring to cut at
-// clause boundaries (commas) near the ideal word-count split point rather
-// than slicing straight through the middle of a phrase.
 function splitTranslationForChunks(translation: string, numChunks: number): string[] {
   if (!translation || numChunks <= 1) return [translation];
 
   const words = translation.split(/\s+/).filter(Boolean);
   if (words.length === 0) return Array(numChunks).fill('');
 
-  // Fewer words than chunks — can't manufacture text that isn't there.
   if (words.length <= numChunks) {
     const parts = [...words];
     while (parts.length < numChunks) parts.push('');
@@ -435,7 +430,6 @@ function buildDisplayChunksFromMatchedWords(item: ResultAyah): ResultAyah[] {
   const dbWords = item.arabic.split(/\s+/).filter(Boolean);
   const spokenWords = item.words || [];
 
-  // Short ayah / unmatched / no timestamps → single unsplit line.
   if (!item.isFullAyah || dbWords.length <= 8 || spokenWords.length === 0) {
     return [{ ...item, isChunk: false, chunkIndex: 0, totalChunks: 1 }];
   }
@@ -497,7 +491,7 @@ function buildDisplayChunksFromMatchedWords(item: ResultAyah): ResultAyah[] {
     return cuts;
   };
 
-  const dbCuts = toMonotonicCuts(dbWords.length, 1); 
+  const dbCuts = toMonotonicCuts(dbWords.length, 1);
   const trCuts = toMonotonicCuts(translationWords.length);
   const spCuts = toMonotonicCuts(totalSpoken);
 
@@ -588,6 +582,42 @@ function buildFinalAyahs(results: ResultAyah[], videoDuration: number) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
+
+    // ---- Shared: load Quran + translation once ----
+    const [quranRes, translationRes] = await Promise.all([
+      fetch('https://api.alquran.cloud/v1/quran/ar.quran-uthmani', { cache: 'force-cache' }),
+      fetch(`https://api.alquran.cloud/v1/quran/${DEFAULT_TRANSLATION_EDITION}`, { cache: 'force-cache' }),
+    ]);
+
+    const quranData = await quranRes.json();
+    const translationData = await translationRes.json();
+
+    const surahsList: any[] = quranData?.data?.surahs || [];
+    const translationMap = buildTranslationMap(translationData?.data?.surahs || []);
+    const allCandidates = buildAllCandidates(surahsList);
+    const getTranslation = (s: number, a: number) => translationMap.get(`${s}:${a}`) || '';
+
+    // ---- Mode 1: single-text re-detect (used by the "Re-match ayah" button
+    // in AyahTimeline when the user manually edits the Arabic text) ----
+    if (typeof body.text === 'string' && body.text.trim() && !Array.isArray(body.words)) {
+      const match = searchCandidates(body.text, allCandidates, 0.3);
+      if (!match) {
+        return NextResponse.json({ success: false, error: 'No matching ayah found in the Quran database.' });
+      }
+      return NextResponse.json({
+        success: true,
+        ayah: {
+          arabic: match.ayahText,
+          translation: getTranslation(match.surah.number, match.ayahNumber),
+          surah: match.surah.number,
+          surahName: match.surah.name,
+          surahEnglishName: match.surah.englishName,
+          ayahNumber: match.ayahNumber,
+        },
+      });
+    }
+
+    // ---- Mode 2: full word-stream matching (used right after transcription) ----
     const { words = [], videoDuration = 0 } = body;
 
     const rawWords: WordTs[] = (Array.isArray(words) ? words : [])
@@ -604,49 +634,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No words provided.' }, { status: 400 });
     }
 
-    const [quranRes, translationRes] = await Promise.all([
-      fetch('https://api.alquran.cloud/v1/quran/ar.quran-uthmani', { cache: 'force-cache' }),
-      fetch(`https://api.alquran.cloud/v1/quran/${DEFAULT_TRANSLATION_EDITION}`, { cache: 'force-cache' }),
-    ]);
-
-    const quranData = await quranRes.json();
-    const translationData = await translationRes.json();
-
-    const surahsList: any[] = quranData?.data?.surahs || [];
-    const translationMap = buildTranslationMap(translationData?.data?.surahs || []);
-    const allCandidates = buildAllCandidates(surahsList);
-    const getTranslation = (s: number, a: number) => translationMap.get(`${s}:${a}`) || '';
-
     const results: ResultAyah[] = [];
-    let p = 0; 
+    let p = 0;
 
-    // --- Step 3: detect opening Bismillah ---
-    if (wordStream.length >= 4 && isBismillahChunk(wordStream.slice(0, 4))) {
-      const chunk = wordStream.slice(0, 4);
-      results.push({
-        surah: null,
-        surahName: null,
-        surahEnglishName: null,
-        ayahNumber: 0,
-        isBismillah: true,
-        arabic: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ',
-        translation: BISMILLAH_TRANSLATION,
-        isFullAyah: true,
-        startTime: Number(chunk[0].start.toFixed(2)),
-        endTime: Number(chunk[chunk.length - 1].end.toFixed(2)),
-        words: chunk.map((w) => ({
-          word: w.word,
-          start: Number(w.start.toFixed(2)),
-          end: Number(w.end.toFixed(2)),
-        })),
-      });
-      p = 4;
+    // --- skip opening isti'adhah (أعوذ بالله من الشيطان الرجيم) entirely.
+    // It is not Quran ayah text, so no timeline entry is created for it —
+    // it's just consumed so it can never pollute the ayah anchor search below. ---
+    if (wordStream.length >= 5 && isIstiadhaChunk(wordStream.slice(0, 5))) {
+      p = 5;
+    }
+
+    // --- skip opening Bismillah (بسم الله الرحمن الرحيم) entirely, same reasoning.
+    // This runs AFTER the isti'adhah skip so "isti'adhah + bismillah" both get
+    // consumed correctly regardless of order/spacing. ---
+    if (wordStream.length >= p + 4 && isBismillahChunk(wordStream.slice(p, p + 4))) {
+      p += 4;
     }
 
     let curSurahNum: number | null = null;
     let curAyahNum: number | null = null;
 
-    // --- Step 3.5: detect opening muqatta'at (disjointed letters) ---
+    // --- detect opening muqatta'at (disjointed letters) ---
     const muqattaatHit = detectMuqattaat(wordStream, p);
     if (muqattaatHit) {
       const letters = MUQATTAAT_BY_SURAH[muqattaatHit.surahNumber];
@@ -660,7 +668,7 @@ export async function POST(req: NextRequest) {
         ayahNumber: 1,
         isMuqattaat: true,
         arabic: letters.display ?? letters.fused,
-        translation: '', 
+        translation: '',
         isFullAyah: true,
         startTime: Number(chunk[0].start.toFixed(2)),
         endTime: Number(chunk[chunk.length - 1].end.toFixed(2)),
@@ -676,7 +684,7 @@ export async function POST(req: NextRequest) {
       curAyahNum = letters.nextAyah;
     }
 
-    // --- Step 4: find the anchor ayah ---
+    // --- find the anchor ayah ---
     if (curSurahNum === null) {
       const initialChunk = wordStream.slice(p, p + 12).map((w) => w.word).join(' ');
       const anchor = searchCandidates(initialChunk, allCandidates, 0.3);
@@ -707,7 +715,7 @@ export async function POST(req: NextRequest) {
 
     let safety = 0;
 
-    // --- Step 5: walk forward ayah-by-ayah ---
+    // --- walk forward ayah-by-ayah ---
     while (p < wordStream.length && safety < wordStream.length * 3) {
       safety++;
 

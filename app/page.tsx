@@ -116,6 +116,18 @@ export default function Home() {
   const [englishFontSize, setEnglishFontSize] = useState(20);
   const [wordHighlight, setWordHighlight] = useState(false);
 
+  // NEW: tracks live playback position (fed by VideoPreview) so the
+  // AyahTimeline can draw its red playhead line in sync with the video.
+  const [currentTime, setCurrentTime] = useState(0);
+  // NEW: clicking/dragging in AyahTimeline sets this, VideoPreview reacts
+  // to it and actually seeks the <video> element. `token` forces the effect
+  // to re-fire even if the same timestamp is requested twice in a row.
+  const [seekRequest, setSeekRequest] = useState<{ time: number; token: number } | null>(null);
+
+  const handleTimelineSeek = useCallback((time: number) => {
+    setSeekRequest({ time, token: Date.now() });
+  }, []);
+
   const handleVideoSelected = useCallback(async (file: File, url: string, duration: number) => {
     setVideoFile(file);
     setVideoUrl(url);
@@ -270,6 +282,8 @@ export default function Home() {
     setVideoFile(null);
     setVideoUrl('');
     setError('');
+    setCurrentTime(0);
+    setSeekRequest(null);
   };
 
   // Show hero only on initial upload step
@@ -427,6 +441,8 @@ export default function Home() {
               arabicFontSize={arabicFontSize}
               englishFontSize={englishFontSize}
               wordHighlight={wordHighlight}
+              onTimeUpdate={setCurrentTime}
+              seekTo={seekRequest}
             />
 
             {/* Edit Panel */}
@@ -664,7 +680,13 @@ export default function Home() {
                 <h3 className="text-sm font-semibold mb-3 text-white/70 uppercase tracking-wider">
                   Detected Ayahs ({ayahs.length})
                 </h3>
-                <AyahTimeline ayahs={ayahs} onUpdate={setAyahs} />
+                <AyahTimeline
+                  ayahs={ayahs}
+                  onUpdate={setAyahs}
+                  duration={videoDuration}
+                  currentTime={currentTime}
+                  onSeek={handleTimelineSeek}
+                />
               </div>
 
               {/* Export Button */}

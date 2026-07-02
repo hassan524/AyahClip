@@ -21,13 +21,19 @@ interface Props {
   arabicFontSize: number;
   englishFontSize: number;
   wordHighlight?: boolean;
+  // NEW: lets parent (page.tsx) know the current playback time, so it can
+  // be handed down to AyahTimeline for the red playhead line.
+  onTimeUpdate?: (time: number) => void;
+  // NEW: when this changes (time + token), the video seeks to `time`.
+  // Token guarantees the effect re-fires even if the same time is requested twice.
+  seekTo?: { time: number; token: number } | null;
 }
 
 export default function VideoPreview({
   videoUrl, ayahs, background, textColor, showTranslation, duration,
   videoOpacity, overlayType, overlayOpacity, arabicFont, englishFont,
   arabicAlign, englishAlign, verticalPosition, arabicFontSize, englishFontSize,
-  wordHighlight = false,
+  wordHighlight = false, onTimeUpdate, seekTo,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const bgVideoRef = useRef<HTMLVideoElement>(null);
@@ -39,6 +45,7 @@ export default function VideoPreview({
   const [seeking, setSeeking] = useState(false);
   const rafRef = useRef<number>(0);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSeekTokenRef = useRef<number | null>(null);
 
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
@@ -63,16 +70,25 @@ export default function VideoPreview({
     const video = videoRef.current;
     if (video && !video.paused && !video.ended) {
       setCurrentTime(video.currentTime);
+      onTimeUpdate?.(video.currentTime);
     }
     rafRef.current = requestAnimationFrame(tick);
-  }, []);
+  }, [onTimeUpdate]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     const onPlay = () => { setPlaying(true); rafRef.current = requestAnimationFrame(tick); };
-    const onPause = () => { setPlaying(false); cancelAnimationFrame(rafRef.current); setCurrentTime(video.currentTime); };
-    const onSeeked = () => setCurrentTime(video.currentTime);
+    const onPause = () => {
+      setPlaying(false);
+      cancelAnimationFrame(rafRef.current);
+      setCurrentTime(video.currentTime);
+      onTimeUpdate?.(video.currentTime);
+    };
+    const onSeeked = () => {
+      setCurrentTime(video.currentTime);
+      onTimeUpdate?.(video.currentTime);
+    };
     const onEnded = () => { setPlaying(false); cancelAnimationFrame(rafRef.current); };
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
@@ -85,7 +101,19 @@ export default function VideoPreview({
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('ended', onEnded);
     };
-  }, [tick]);
+  }, [tick, onTimeUpdate]);
+
+  // Respond to seek requests coming from the AyahTimeline (click / segment edit).
+  useEffect(() => {
+    if (!seekTo) return;
+    if (lastSeekTokenRef.current === seekTo.token) return;
+    lastSeekTokenRef.current = seekTo.token;
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = seekTo.time;
+    setCurrentTime(seekTo.time);
+    onTimeUpdate?.(seekTo.time);
+  }, [seekTo, onTimeUpdate]);
 
   const currentAyah: MatchedAyah | null = (() => {
     if (ayahs.length === 0) return null;
@@ -128,6 +156,7 @@ export default function VideoPreview({
     const newTime = (parseFloat(e.target.value) / 100) * duration;
     v.currentTime = newTime;
     setCurrentTime(newTime);
+    onTimeUpdate?.(newTime);
   };
 
   const formatTime = (s: number) =>
