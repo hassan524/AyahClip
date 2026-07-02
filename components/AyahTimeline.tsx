@@ -16,6 +16,7 @@ function formatTime(s: number) {
 
 export default function AyahTimeline({ ayahs, onUpdate }: Props) {
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [detecting, setDetecting] = useState<number | null>(null);
 
   const remove = (i: number) => onUpdate(ayahs.filter((_, idx) => idx !== i));
 
@@ -27,6 +28,46 @@ export default function AyahTimeline({ ayahs, onUpdate }: Props) {
       return ayah;
     });
     onUpdate(updated);
+  };
+
+  const handleDetect = async (index: number) => {
+    const ayah = ayahs[index];
+    if (!ayah.arabic.trim()) return;
+
+    setDetecting(index);
+    try {
+      const res = await fetch('/api/match-ayahs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: ayah.arabic }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.ayah) {
+        const updated = ayahs.map((item, idx) => {
+          if (idx === index) {
+            return {
+              ...item,
+              arabic: data.ayah.arabic,
+              translation: data.ayah.translation,
+              surah: data.ayah.surah,
+              surahName: data.ayah.surahName,
+              surahEnglishName: data.ayah.surahEnglishName,
+              ayahNumber: data.ayah.ayahNumber,
+            };
+          }
+          return item;
+        });
+        onUpdate(updated);
+      } else {
+        alert(data.error || 'No matching ayah found in database.');
+      }
+    } catch (err) {
+      console.error('Error detecting ayah:', err);
+      alert('Failed to connect to the matching service.');
+    } finally {
+      setDetecting(null);
+    }
   };
 
   return (
@@ -56,7 +97,16 @@ export default function AyahTimeline({ ayahs, onUpdate }: Props) {
           {expanded === i && (
             <div className="px-3 pb-3 border-t border-white/10 pt-2.5 space-y-3">
               <div className="space-y-1">
-                <label className="text-[9px] text-white/40 uppercase tracking-wider block font-semibold">Arabic Text</label>
+                <div className="flex justify-between items-center">
+                  <label className="text-[9px] text-white/40 uppercase tracking-wider block font-semibold">Arabic Text</label>
+                  <button
+                    onClick={() => handleDetect(i)}
+                    disabled={detecting !== null}
+                    className="text-[10px] text-emerald-400 hover:text-emerald-300 disabled:text-white/20 font-medium transition-colors flex items-center gap-1"
+                  >
+                    {detecting === i ? '⏳ Detecting...' : '✨ Auto-Detect'}
+                  </button>
+                </div>
                 <textarea
                   value={ayah.arabic}
                   onChange={(e) => updateField(i, 'arabic', e.target.value)}

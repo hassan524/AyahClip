@@ -8,8 +8,8 @@ export const maxDuration = 60;
 // ones (e.g. "يتفطرن" mis-heard as "يتفضلون"). This does NOT make Whisper
 // skip silence or wait for recitation to begin — it only nudges word choice.
 const QURAN_PROMPT =
-  'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ تلاوة قرآنية بصوت واضح وتجويد، آيات من القرآن الكريم';
-
+  "This audio is a recitation of the Holy Quran in Classical Arabic. Use the exact Quranic text and spellings. If the recitation contains the disjointed Quranic letters (Muqatta'at), transcribe them as separate letters exactly as they appear in the Quran, for example: كٓ هٰ يٰ عٓ صٓ, ا ل م, ا ل م ص, ا ل ر, طٰ هٰ, يٰ سٓ, حٰ مٓ, قٓ, نٓ. Also look for Bismillah or Auzibillah.";
+  
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();

@@ -217,8 +217,11 @@ export default function Home() {
       const matchRes = await fetch('/api/match-ayahs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ words: allWords, videoDuration: duration }),
-
+        body: JSON.stringify({
+          words: allWords,
+          segments: allSegments,
+          videoDuration: duration
+        }),
       });
 
       const matchText = await matchRes.text();
