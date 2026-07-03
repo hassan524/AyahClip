@@ -10,6 +10,8 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
+import { getAyahWithTranslation, normalizeArabic } from './quran';
+
 export async function matchAyahsWithAI(words: InputWord[], segments: any[] = []) {
   const prompt = `
 You are an expert Quranic scholar processing a flawed phonetic transcription that has been broken down into specific SEGMENTS.
@@ -92,8 +94,50 @@ ${JSON.stringify(segments)}
       ayah.startTime = segment.start;
       ayah.endTime = segment.end;
       
-      // Reconstruct the words array algorithmically from the corrected Arabic text
-      const correctedWords = (ayah.arabic || '').split(/\\s+/).filter(Boolean);
+      // ============================================================================
+      // PERFECT DIACRITICS GRAFTER
+      // Fetch actual full ayah from database to guarantee 100% accurate Uthmani script
+      // ============================================================================
+      if (ayah.surah && ayah.ayahNumber) {
+        const dbData = await getAyahWithTranslation(ayah.surah, ayah.ayahNumber);
+        if (dbData) {
+          if (ayah.isFullAyah) {
+            ayah.arabic = dbData.arabic;
+            // Also override the translation to guarantee 100% accuracy
+            ayah.translation = dbData.translation;
+          } else if (ayah.arabic) {
+            // Find the best matching substring in the full DB text
+            const dbRawWords = dbData.arabic.split(/\s+/).filter(Boolean);
+            const dbNormWords = dbRawWords.map(w => normalizeArabic(w));
+            
+            const llmRawWords = ayah.arabic.split(/\s+/).filter(Boolean);
+            const llmNormWords = llmRawWords.map(w => normalizeArabic(w));
+            
+            let bestMatchIndex = 0;
+            let bestMatchScore = -1;
+            
+            // Sliding window to find where the LLM's partial segment fits in the full Ayah
+            for (let j = 0; j <= dbNormWords.length - llmNormWords.length; j++) {
+              let score = 0;
+              for (let k = 0; k < llmNormWords.length; k++) {
+                if (dbNormWords[j + k] === llmNormWords[k]) score++;
+              }
+              if (score > bestMatchScore) {
+                bestMatchScore = score;
+                bestMatchIndex = j;
+              }
+            }
+            
+            // Extract the perfect Uthmani text using the bounds we just found
+            if (bestMatchScore > 0) {
+              ayah.arabic = dbRawWords.slice(bestMatchIndex, bestMatchIndex + llmNormWords.length).join(' ');
+            }
+          }
+        }
+      }
+      
+      // Reconstruct the words array algorithmically from the perfectly diacriticized text
+      const correctedWords = (ayah.arabic || '').split(/\s+/).filter(Boolean);
       ayah.words = [];
       
       if (correctedWords.length > 0) {
