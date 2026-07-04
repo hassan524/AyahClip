@@ -9,93 +9,222 @@ interface AyahData {
   numberInSurah: number;
 }
 
+interface ActiveQuote {
+  id: string;
+  ayah: AyahData;
+  cornerId: string;
+  classes: string;
+}
+
 interface Props {
   enabled: boolean;
 }
 
-// cycle: 1min, then 3min, then 2min, then repeats
-const INTERVALS_MIN = [1, 3, 2];
-const DISPLAY_MS = 9000;
-const POSITIONS = ['top-4 left-4', 'top-4 right-4', 'bottom-4 left-4', 'bottom-4 right-4'];
+const CORNERS = [
+  { id: 'top-left', classes: 'top-4 left-4' },
+  { id: 'top-right', classes: 'top-4 right-4' },
+  { id: 'bottom-left', classes: 'bottom-4 left-4' },
+  { id: 'bottom-right', classes: 'bottom-4 right-4' }
+];
+
+const DISPLAY_MS = 12000; // Stay on screen for 12 seconds
+const DELAYS_MS = [20000, 120000, 180000]; // 20 seconds, 2 minutes, 3 minutes
+
+const BEAUTIFUL_AYAH_ARRAY: AyahData[] = [
+  {
+    text: "مَا وَدَّعَكَ رَبُّكَ وَمَا قَلَىٰ",
+    translation: "Your Lord has not taken leave of you, nor has He detested you.",
+    surahEnglishName: "Ad-Duha",
+    numberInSurah: 3,
+  },
+  {
+    text: "فَإِنَّ مَعَ الْعُسْرِ يُسْرًا • إِنَّ مَعَ الْعُسْرِ يُسْرًا",
+    translation: "For indeed, with hardship [will be] ease. Indeed, with hardship [will be] ease.",
+    surahEnglishName: "Ash-Sharh",
+    numberInSurah: 5,
+  },
+  {
+    text: "وَإِذَا سَأَلَكَ عِبَادِي عَنِّي فَإِنِّي قَرِيبٌ ۖ أُجِيبُ دَعْوَةَ الدَّاعِ إِذَا دَعَانِ",
+    translation: "And when My servants ask you concerning Me - indeed I am near. I respond to the invocation of the supplicant when he calls upon Me.",
+    surahEnglishName: "Al-Baqarah",
+    numberInSurah: 186,
+  },
+  {
+    text: "لَا يُكَلِّفُ اللَّهُ نَفْسًا إِلَّا وُسْعَهَا",
+    translation: "Allah does not charge a soul except [with that within] its capacity.",
+    surahEnglishName: "Al-Baqarah",
+    numberInSurah: 286,
+  },
+  {
+    text: "لَا تَقْنَطُوا مِن رَّحْمَةِ اللَّهِ ۚ إِنَّ اللَّهَ يَغْفِرُ الذُّنُوبَ جَمِيعًا",
+    translation: "Do not despair of the mercy of Allah. Indeed, Allah forgives all sins.",
+    surahEnglishName: "Az-Zumar",
+    numberInSurah: 53,
+  },
+  {
+    text: "وَاللَّهُ خَيْرُ الْمَاكِرِينَ",
+    translation: "And Allah is the best of planners.",
+    surahEnglishName: "Al-Anfal",
+    numberInSurah: 30,
+  },
+  {
+    text: "لَا تَخَافَا ۖ إِنَّنِي مَعَكُمَا أَسْمَعُ وَأَرَىٰ",
+    translation: "Fear not. Indeed, I am with you; I hear and I see.",
+    surahEnglishName: "Taha",
+    numberInSurah: 46,
+  },
+  {
+    text: "وَهُوَ مَعَكُمْ أَيْنَ مَا كُنتُمْ",
+    translation: "And He is with you wherever you are.",
+    surahEnglishName: "Al-Hadid",
+    numberInSurah: 4,
+  },
+  {
+    text: "وَقَالَ رَبُّكُمُ ادْعُونِي أَسْتَجِبْ لَكُمْ",
+    translation: "And your Lord says, 'Call upon Me; I will respond to you.'",
+    surahEnglishName: "Ghafir",
+    numberInSurah: 60,
+  },
+  {
+    text: "أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ",
+    translation: "Unquestionably, by the remembrance of Allah hearts are assured.",
+    surahEnglishName: "Ar-Ra'd",
+    numberInSurah: 28,
+  }
+];
 
 export default function QuranQuoteToast({ enabled }: Props) {
-  const [ayah, setAyah] = useState<AyahData | null>(null);
-  const [visible, setVisible] = useState(false);
-  const [position, setPosition] = useState(POSITIONS[0]);
-  const cycleIndexRef = useRef(0);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [activeQuotes, setActiveQuotes] = useState<ActiveQuote[]>([]);
+  const activeQuotesRef = useRef<ActiveQuote[]>([]);
+  activeQuotesRef.current = activeQuotes;
 
-  const fetchAyah = async () => {
-    try {
-      const res = await fetch(
-        'https://api.alquran.cloud/v1/ayah/random/editions/quran-simple,en.sahih',
-        { cache: 'no-store' }
-      );
-      const data = await res.json();
-      if (data.code === 200 && Array.isArray(data.data) && data.data.length >= 2) {
-        const arabic = data.data[0];
-        const english = data.data[1];
-        setAyah({
-          text: arabic.text,
-          translation: english.text,
-          surahEnglishName: arabic.surah?.englishName || '',
-          numberInSurah: arabic.numberInSurah || 1,
-        });
-      }
-    } catch (err) {
-      console.error('Failed to fetch ayah for toast:', err);
+  const getNextAyah = (): AyahData => {
+    // Filter out ayahs that are already displayed to avoid duplicates
+    const activeTexts = activeQuotesRef.current.map(q => q.ayah.text);
+    const availableAyahs = BEAUTIFUL_AYAH_ARRAY.filter(a => !activeTexts.includes(a.text));
+    
+    const pool = availableAyahs.length > 0 ? availableAyahs : BEAUTIFUL_AYAH_ARRAY;
+    return pool[Math.floor(Math.random() * pool.length)];
+  };
+
+  const spawnQuote = () => {
+    if (activeQuotesRef.current.length >= 3) {
+      // Remove oldest quote to make space
+      const oldest = activeQuotesRef.current[0];
+      removeQuote(oldest.id);
     }
+
+    const ayahData = getNextAyah();
+
+    // Find occupied corners
+    const occupiedCornerIds = activeQuotesRef.current.map(q => q.cornerId);
+    // Find free corners
+    const freeCorners = CORNERS.filter(c => !occupiedCornerIds.includes(c.id));
+    
+    if (freeCorners.length === 0) return;
+
+    // Randomly pick a free corner
+    const selectedCorner = freeCorners[Math.floor(Math.random() * freeCorners.length)];
+    const quoteId = Math.random().toString(36).substring(2, 9);
+
+    const newQuote: ActiveQuote = {
+      id: quoteId,
+      ayah: ayahData,
+      cornerId: selectedCorner.id,
+      classes: selectedCorner.classes
+    };
+
+    setActiveQuotes(prev => [...prev, newQuote]);
+
+    // Schedule auto-removal
+    setTimeout(() => {
+      removeQuote(quoteId);
+    }, DISPLAY_MS);
   };
 
-  const showToast = async () => {
-    await fetchAyah();
-    setPosition(POSITIONS[Math.floor(Math.random() * POSITIONS.length)]);
-    setVisible(true);
-    hideTimeoutRef.current = setTimeout(() => setVisible(false), DISPLAY_MS);
-  };
-
-  const scheduleNext = () => {
-    const minutes = INTERVALS_MIN[cycleIndexRef.current % INTERVALS_MIN.length];
-    cycleIndexRef.current += 1;
-    timeoutRef.current = setTimeout(() => {
-      showToast();
-      scheduleNext();
-    }, minutes * 60 * 1000);
+  const removeQuote = (id: string) => {
+    setActiveQuotes(prev => prev.filter(q => q.id !== id));
   };
 
   useEffect(() => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
-
     if (!enabled) {
-      setVisible(false);
+      setActiveQuotes([]);
       return;
     }
 
-    cycleIndexRef.current = 0;
+    // Spawn first quote immediately
+    spawnQuote();
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let delayIndex = 0;
+
+    const scheduleNext = () => {
+      const currentDelay = delayIndex < DELAYS_MS.length 
+        ? DELAYS_MS[delayIndex] 
+        : DELAYS_MS[DELAYS_MS.length - 1];
+      
+      if (delayIndex < DELAYS_MS.length) {
+        delayIndex++;
+      }
+
+      timeoutId = setTimeout(() => {
+        spawnQuote();
+        scheduleNext();
+      }, currentDelay);
+    };
+
     scheduleNext();
 
     return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+      if (timeoutId) clearTimeout(timeoutId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
-  if (!enabled || !visible || !ayah) return null;
+  if (!enabled || activeQuotes.length === 0) return null;
 
   return (
-    <div className={`fixed z-[60] ${position} w-72 bg-white border border-emerald-800 rounded-md shadow-lg p-4`}>
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <span className="text-xs font-semibold text-emerald-800">Qur'an</span>
-        <button onClick={() => setVisible(false)} className="text-zinc-400 hover:text-zinc-700 text-xs">
-          ✕
-        </button>
-      </div>
-      <p dir="rtl" className="text-emerald-950 text-base leading-relaxed mb-2">{ayah.text}</p>
-      <p className="text-zinc-600 text-xs leading-relaxed mb-2">"{ayah.translation}"</p>
-      <p className="text-emerald-700 text-[11px] font-medium">— {ayah.surahEnglishName} {ayah.numberInSurah}</p>
-    </div>
+    <>
+      {activeQuotes.map(quote => (
+        <div
+          key={quote.id}
+          className={`fixed z-[60] ${quote.classes} w-[320px] sm:w-[380px] md:w-[440px] bg-white/95 border border-emerald-800/10 rounded-xl shadow-lg shadow-emerald-950/5 p-3 pr-7 flex items-center justify-between gap-3 animate-scale-up hover:shadow-emerald-950/10 transition-all`}
+        >
+          {/* Main Horizontal Box */}
+          <div className="flex-1 flex items-center gap-3 min-w-0">
+            {/* Left Column: Translation & Citation */}
+            <div className="flex-1 min-w-0">
+              <p className="text-zinc-600 text-[11px] sm:text-xs italic leading-snug line-clamp-2">
+                "{quote.ayah.translation}"
+              </p>
+              <p className="text-emerald-700 text-[9px] sm:text-[10px] font-semibold mt-0.5 whitespace-nowrap">
+                — {quote.ayah.surahEnglishName} {quote.ayah.numberInSurah}
+              </p>
+            </div>
+            
+            {/* Elegant Divider */}
+            <div className="h-8 w-px bg-emerald-800/10 flex-shrink-0" />
+            
+            {/* Right Column: Arabic Script */}
+            <div className="flex-1 text-right min-w-0" dir="rtl">
+              <p className="text-emerald-950 text-xs sm:text-sm font-medium leading-relaxed line-clamp-2">
+                {quote.ayah.text}
+              </p>
+            </div>
+          </div>
+
+          {/* Absolute Position Close Button */}
+          <button
+            onClick={() => removeQuote(quote.id)}
+            className="absolute top-1.5 right-1.5 text-zinc-400 hover:text-zinc-600 p-0.5 rounded transition-colors cursor-pointer"
+            aria-label="Close"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      ))}
+    </>
   );
-}
+}

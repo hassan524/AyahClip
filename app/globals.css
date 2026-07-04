@@ -10,6 +10,22 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  --color-emerald-50: #f8fae6;
+  --color-emerald-100: #f0f4bf;
+  --color-emerald-200: #e2eb84;
+  --color-emerald-300: #cfdf4f;
+  --color-emerald-400: #bfd036;
+  --color-emerald-500: #c0c847;
+  --color-emerald-600: #9fa634;
+  --color-emerald-700: #7b8129;
+  --color-emerald-800: #5f6321;
+  --color-emerald-900: #4d501d;
+  --color-emerald-950: #2b2d10;
+}
+
+.background {
+  background-color: var(--color-emerald-900);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -23,4 +39,22 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.15s ease-out forwards;
+}
+
+.animate-scale-up {
+  animation: scaleUp 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleUp {
+  from { transform: scale(0.96); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }

@@ -136,12 +136,12 @@ ${JSON.stringify(segments)}
           } else if (ayah.arabic) {
             // Find the best matching substring in the full DB text using raw phonetic words
             const dbRawWords = dbData.arabic.split(/\s+/).filter(Boolean);
-            const dbNormWords = dbRawWords.map(w => normalizeArabic(w));
+            const dbNormWords = dbRawWords.map((w: string) => normalizeArabic(w));
             
             // Extract the original phonetic words from the Whisper transcription that fall within this segment
             const segWords = words.filter(w => w.start >= segment.start - 0.5 && w.end <= segment.end + 0.5);
-            const inputRawWords = segWords.length > 0 ? segWords.map(w => w.word) : ayah.arabic.split(/\s+/).filter(Boolean);
-            const inputNormWords = inputRawWords.map(w => normalizeArabic(w));
+            const inputRawWords: string[] = segWords.length > 0 ? segWords.map(w => w.word) : (ayah.arabic || '').split(/\s+/).filter(Boolean);
+            const inputNormWords = inputRawWords.map((w: string) => normalizeArabic(w));
             
             let bestMatchIndex = 0;
             let bestMatchScore = -1;

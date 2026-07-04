@@ -1,54 +1,136 @@
 'use client';
 
+import Image from 'next/image';
+import { Menu } from 'lucide-react';
+import { useState } from 'react';
+
 interface Props {
   step: string;
   onReset: () => void;
   quotesEnabled: boolean;
   onToggleQuotes: () => void;
+  onContactClick?: () => void;
 }
 
-export default function Navbar({ step, onReset, quotesEnabled, onToggleQuotes }: Props) {
+export default function Navbar({
+  step,
+  onReset,
+  quotesEnabled,
+  onToggleQuotes,
+  onContactClick,
+}: Props) {
+  const [open, setOpen] = useState(false);
+
   const scrollTo = (id: string) => {
+    setOpen(false);
+
     if (step !== 'upload') {
       onReset();
-      setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }), 100);
+      setTimeout(() => {
+        document
+          .getElementById(id)
+          ?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
     } else {
-      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+      document
+        .getElementById(id)
+        ?.scrollIntoView({ behavior: 'smooth' });
     }
   };
 
   return (
-    <header className="bg-emerald-900 px-4 sm:px-6 py-3 sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <span onClick={onReset} className="text-white font-bold text-lg cursor-pointer">
-          AyahClip
-        </span>
+    <header className="sticky top-0 z-50 border-b border-emerald-100 bg-white/90 backdrop-blur">
+      <div className="mx-auto flex h-18 max-w-7xl items-center justify-between px-4 sm:px-6">
+
+        {/* Logo */}
+        <button
+          onClick={onReset}
+          className="flex items-center cursor-pointer"
+        >
+          <Image
+            src="/logo.png"
+            alt="AyahClip"
+            width={150}
+            height={150}
+            className="h-20 w-auto -my-6 object-contain"
+            priority
+          />
+        </button>
 
         {step === 'upload' ? (
-          <nav className="hidden md:flex items-center gap-6">
-            <button onClick={() => scrollTo('options')} className="text-sm text-white/80 hover:text-white">
-              Options
-            </button>
-            <button onClick={() => scrollTo('how-it-works')} className="text-sm text-white/80 hover:text-white">
-              How It Works
-            </button>
-            <label className="flex items-center gap-1.5 text-xs text-white/60 cursor-pointer select-none">
-              <input type="checkbox" checked={!quotesEnabled} onChange={onToggleQuotes} className="w-3.5 h-3.5" />
-              Don't show quotes
-            </label>
+          <>
+            {/* Desktop */}
+            <nav className="hidden items-center gap-8 md:flex">
+              <button
+                onClick={() => scrollTo('how-it-works')}
+                className="font-medium text-gray-700 transition hover:text-emerald-600 cursor-pointer"
+              >
+                How It Works
+              </button>
+
+              <button
+                onClick={() => scrollTo('faqs')}
+                className="font-medium text-gray-700 transition hover:text-emerald-600 cursor-pointer"
+              >
+                FAQs
+              </button>
+
+              <button
+                onClick={onContactClick}
+                className="font-medium text-gray-700 transition hover:text-emerald-600 cursor-pointer"
+              >
+                Contact Us
+              </button>
+            </nav>
+
+            {/* Mobile Menu Button */}
             <button
-              onClick={() => scrollTo('uploader')}
-              className="text-sm font-semibold text-emerald-900 bg-white hover:bg-emerald-50 px-4 py-1.5 rounded"
+              onClick={() => setOpen(!open)}
+              className="md:hidden p-2 rounded-lg hover:bg-emerald-50 transition-colors cursor-pointer"
             >
-              Start
+              <Menu className="h-6 w-6 text-emerald-700" />
             </button>
-          </nav>
+          </>
         ) : (
-          <button onClick={onReset} className="text-sm text-white/90 hover:text-white">
+          <button
+            onClick={onReset}
+            className="rounded-lg border border-emerald-200 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 cursor-pointer"
+          >
             ← Back Home
           </button>
         )}
       </div>
+
+      {/* Mobile Menu */}
+      {open && step === 'upload' && (
+        <div className="border-t border-emerald-100 bg-white md:hidden">
+          <div className="flex flex-col gap-4 p-5">
+            <button
+              onClick={() => scrollTo('how-it-works')}
+              className="text-left text-gray-700 font-medium hover:text-emerald-600 transition-colors cursor-pointer"
+            >
+              How It Works
+            </button>
+
+            <button
+              onClick={() => scrollTo('faqs')}
+              className="text-left text-gray-700 font-medium hover:text-emerald-600 transition-colors cursor-pointer"
+            >
+              FAQs
+            </button>
+
+            <button
+              onClick={() => {
+                setOpen(false);
+                if (onContactClick) onContactClick();
+              }}
+              className="text-left text-gray-700 font-medium hover:text-emerald-600 transition-colors cursor-pointer"
+            >
+              Contact Us
+            </button>
+          </div>
+        </div>
+      )}
     </header>
   );
-}
+}

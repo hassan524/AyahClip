@@ -4,13 +4,17 @@ import { useState, useCallback } from 'react';
 import Navbar from '@/components/Navbar';
 import LandingHero from '@/components/LandingHero';
 import HowItWorks from '@/components/HowItWorks';
+import FAQs from '@/components/FAQs';
 import LandingFooter from '@/components/LandingFooter';
 import QuranQuoteToast from '@/components/QuranQuoteToast';
 import VideoUploader from '@/components/VideoUploader';
+import VoiceRecorder from '@/components/VoiceRecorder';
+import CreateFromVerse from '@/components/CreateFromVerse';
 import BackgroundPicker from '@/components/BackgroundPicker';
 import AyahTimeline from '@/components/AyahTimeline';
 import VideoPreview, { TextPosition, AspectRatio } from '@/components/VideoPreview';
 import ExportPanel from '@/components/ExportPanel';
+import Dialog from '@/components/Dialog';
 
 export type BackgroundConfig =
   | { type: 'color'; value: string }
@@ -127,6 +131,7 @@ export default function Home() {
   const [englishAlign, setEnglishAlign] = useState<'center' | 'left'>('center');
   const [wordHighlight, setWordHighlight] = useState(false);
   const [quotesEnabled, setQuotesEnabled] = useState(true);
+  const [isContactOpen, setIsContactOpen] = useState(false);
 
   const [background, setBackground] = useState<BackgroundConfig>({ type: 'color', value: '#000000' });
   const [textColor, setTextColor] = useState('#ffffff');
@@ -357,14 +362,20 @@ export default function Home() {
         onReset={reset}
         quotesEnabled={quotesEnabled}
         onToggleQuotes={() => setQuotesEnabled((v) => !v)}
+        onContactClick={() => setIsContactOpen(true)}
       />
 
       <QuranQuoteToast enabled={quotesEnabled} />
 
       {showLanding && (
         <>
-          <LandingHero onSelectUpload={scrollToUploader} />
+          <LandingHero
+            onSelectUpload={() => { setActiveFeature('upload'); scrollToUploader(); }}
+            onSelectRecord={() => { setActiveFeature('record'); scrollToUploader(); }}
+            onSelectCreate={() => { setActiveFeature('create'); scrollToUploader(); }}
+          />
           <HowItWorks />
+          <FAQs />
         </>
       )}
 
@@ -375,20 +386,100 @@ export default function Home() {
           </div>
         )}
 
-        {/* Upload Step */}
+        {/* Upload / Record / Create Step */}
         {step === 'upload' && (
           <div id="uploader" className="space-y-8">
             {!videoUrl && (
               <>
-                <div className="text-center space-y-2 mb-8">
-                  <h2 className="text-2xl font-bold text-emerald-950">Upload Your Quran Recitation</h2>
-                  <p className="text-zinc-500 max-w-2xl mx-auto text-sm">
-                    Upload a Quranic recitation video. Ayahs and timestamps will be detected automatically.
-                  </p>
+                {/* Feature Tabs */}
+                <div className="flex justify-center">
+                  <div className="inline-flex bg-zinc-100 rounded-lg p-1 gap-1">
+                    <button
+                      onClick={() => setActiveFeature('upload')}
+                      className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 cursor-pointer ${
+                        activeFeature === 'upload'
+                          ? 'bg-white text-emerald-900 shadow-sm'
+                          : 'text-zinc-500 hover:text-zinc-700'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                        </svg>
+                        Upload Video
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setActiveFeature('record')}
+                      className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 cursor-pointer ${
+                        activeFeature === 'record'
+                          ? 'bg-white text-emerald-900 shadow-sm'
+                          : 'text-zinc-500 hover:text-zinc-700'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                        </svg>
+                        Record Voice
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setActiveFeature('create')}
+                      className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 cursor-pointer ${
+                        activeFeature === 'create'
+                          ? 'bg-white text-emerald-900 shadow-sm'
+                          : 'text-zinc-500 hover:text-zinc-700'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                        </svg>
+                        Create from Verse
+                      </span>
+                    </button>
+                  </div>
                 </div>
-                <div className="max-w-2xl mx-auto">
-                  <VideoUploader onVideoSelected={handleVideoSelected} />
-                </div>
+
+                {/* Upload Tab Content */}
+                {activeFeature === 'upload' && (
+                  <>
+                    <div className="text-center space-y-2 mb-8">
+                      <h2 className="text-2xl font-bold text-emerald-950">Upload Your Quran Recitation</h2>
+                      <p className="text-zinc-500 max-w-2xl mx-auto text-sm">
+                        Upload a Quranic recitation video. Ayahs and timestamps will be detected automatically.
+                      </p>
+                    </div>
+                    <div className="max-w-2xl mx-auto">
+                      <VideoUploader onVideoSelected={handleVideoSelected} />
+                    </div>
+                  </>
+                )}
+
+                {/* Record Tab Content */}
+                {activeFeature === 'record' && (
+                  <div className="max-w-2xl mx-auto">
+                    <VoiceRecorder
+                      onRecordingComplete={(file, url, duration) => {
+                        handleVideoSelected(file, url, duration);
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* Create from Verse Tab Content */}
+                {activeFeature === 'create' && (
+                  <div className="max-w-2xl mx-auto">
+                    <CreateFromVerse
+                      onGenerate={(config) => {
+                        console.log('Generate clip with config:', config);
+                        // TODO: Fetch audio from reciter API and process
+                        alert(`Feature coming soon!\n\nReciter: ${config.reciterName}\nSurah: ${config.surahName} (${config.surahNumber})\nAyahs: ${config.fromAyah}-${config.toAyah}`);
+                      }}
+                    />
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -411,37 +502,55 @@ export default function Home() {
           </div>
         )}
 
-        {/* Edit Step — stacked column: video on top, settings below. Same layout on mobile and desktop. */}
+        {/* Edit Step — side-by-side: video+timeline LEFT, settings RIGHT */}
         {step === 'edit' && videoUrl && (
-          <div className="flex flex-col gap-6 max-w-2xl mx-auto">
-            <VideoPreview
-              videoUrl={videoUrl}
-              ayahs={ayahs}
-              background={background}
-              textColor={textColor}
-              showTranslation={showTranslation}
-              duration={videoDuration}
-              videoOpacity={videoOpacity}
-              overlayType={overlayType}
-              overlayOpacity={overlayOpacity}
-              arabicFont={arabicFont}
-              englishFont={englishFont}
-              arabicAlign={arabicAlign}
-              englishAlign={englishAlign}
-              verticalPosition={verticalPosition}
-              arabicFontSize={arabicFontSize}
-              englishFontSize={englishFontSize}
-              wordHighlight={wordHighlight}
-              onTimeUpdate={setCurrentTime}
-              seekTo={seekRequest}
-              aspectRatio={aspectRatio}
-              arabicPosition={arabicPosition}
-              englishPosition={englishPosition}
-              onArabicPositionChange={setArabicPosition}
-              onEnglishPositionChange={setEnglishPosition}
-            />
+          <div className="flex flex-col lg:flex-row gap-6">
+            {/* LEFT column — Video preview + Timeline (close together) */}
+            <div className="flex flex-col gap-2 lg:w-[55%] lg:sticky lg:top-24 lg:self-start">
+              <VideoPreview
+                videoUrl={videoUrl}
+                ayahs={ayahs}
+                background={background}
+                textColor={textColor}
+                showTranslation={showTranslation}
+                duration={videoDuration}
+                videoOpacity={videoOpacity}
+                overlayType={overlayType}
+                overlayOpacity={overlayOpacity}
+                arabicFont={arabicFont}
+                englishFont={englishFont}
+                arabicAlign={arabicAlign}
+                englishAlign={englishAlign}
+                verticalPosition={verticalPosition}
+                arabicFontSize={arabicFontSize}
+                englishFontSize={englishFontSize}
+                wordHighlight={wordHighlight}
+                onTimeUpdate={setCurrentTime}
+                seekTo={seekRequest}
+                aspectRatio={aspectRatio}
+                arabicPosition={arabicPosition}
+                englishPosition={englishPosition}
+                onArabicPositionChange={setArabicPosition}
+                onEnglishPositionChange={setEnglishPosition}
+              />
 
-            <div className="space-y-4">
+              {/* Timeline directly below video */}
+              <div className="bg-white rounded-md p-4 border border-zinc-200">
+                <h3 className="text-sm font-semibold mb-3 text-emerald-900 uppercase tracking-wide">
+                  Detected Ayahs ({ayahs.length})
+                </h3>
+                <AyahTimeline
+                  ayahs={ayahs}
+                  onUpdate={setAyahs}
+                  duration={videoDuration}
+                  currentTime={currentTime}
+                  onSeek={handleTimelineSeek}
+                />
+              </div>
+            </div>
+
+            {/* RIGHT column — All editing controls */}
+            <div className="lg:w-[45%] space-y-4">
               <div className="bg-white rounded-md p-4 border border-zinc-200 space-y-4">
                 <h3 className="text-sm font-semibold text-emerald-900 uppercase tracking-wide">Format</h3>
                 <div className="grid grid-cols-2 gap-2">
@@ -660,19 +769,6 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="bg-white rounded-md p-4 border border-zinc-200">
-                <h3 className="text-sm font-semibold mb-3 text-emerald-900 uppercase tracking-wide">
-                  Detected Ayahs ({ayahs.length})
-                </h3>
-                <AyahTimeline
-                  ayahs={ayahs}
-                  onUpdate={setAyahs}
-                  duration={videoDuration}
-                  currentTime={currentTime}
-                  onSeek={handleTimelineSeek}
-                />
-              </div>
-
               <button
                 onClick={() => setStep('export')}
                 className="w-full py-3 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold rounded-md transition-colors"
@@ -708,7 +804,16 @@ export default function Home() {
         )}
       </div>
 
-      {showLanding && <LandingFooter />}
+      {showLanding && <LandingFooter onContactClick={() => setIsContactOpen(true)} />}
+
+      <Dialog
+        isOpen={isContactOpen}
+        onClose={() => setIsContactOpen(false)}
+        title="Contact Us"
+        text={`Thank you for using AyahClip! If you have any questions, feedback, or need assistance, feel free to reach out directly.
+
+Email: hassanrehan9975@gmail.com`}
+      />
     </main>
   );
 }
