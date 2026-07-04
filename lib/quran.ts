@@ -38,7 +38,7 @@ export async function searchQuranByText(query: string): Promise<Ayah[]> {
     try {
       const res = await fetch(
         `https://api.alquran.cloud/v1/search/${encoded}/all/quran-simple-clean`,
-        { next: { revalidate: 86400 } }
+        { cache: 'no-store' }
       );
       const data = await res.json();
       if (data.status === 'OK' && data.data && data.data.matches) {
@@ -103,7 +103,7 @@ export async function getAyahWithTranslation(
   try {
     const res = await fetch(
       `https://api.alquran.cloud/v1/ayah/${surah}:${ayah}/editions/quran-uthmani,${edition}`,
-      { next: { revalidate: 86400 } }
+      { cache: 'no-store' }
     );
     const data = await res.json();
     if (data.status !== 'OK') return null;
@@ -121,7 +121,7 @@ export async function getSurahInfo(surahNumber: number) {
   try {
     const res = await fetch(
       `https://api.alquran.cloud/v1/surah/${surahNumber}`,
-      { next: { revalidate: 86400 } }
+      { cache: 'no-store' }
     );
     const data = await res.json();
     if (data.status !== 'OK') return null;

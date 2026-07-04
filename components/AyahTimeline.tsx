@@ -39,15 +39,44 @@ type DragMode =
   | { kind: 'move'; index: number; grabOffset: number }
   | null;
 
+// Finds the closest snap target to `t` (in seconds) within `thresholdSec`.
+// Returns the snapped value, or the original `t` if nothing is close enough.
+function snapTo(t: number, targets: number[], thresholdSec: number): { value: number; snapped: number | null } {
+  let best: number | null = null;
+  let bestDist = thresholdSec;
+  for (const target of targets) {
+    const dist = Math.abs(t - target);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = target;
+    }
+  }
+  return best !== null ? { value: best, snapped: best } : { value: t, snapped: null };
+}
+
 export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTime = 0, onSeek }: Props) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [detecting, setDetecting] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [trackWidth, setTrackWidth] = useState(1000);
+  const [snapGuide, setSnapGuide] = useState<number | null>(null); // seconds, for the magnetic guide line
   const trackRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragMode>(null);
 
   const safeDuration = duration > 0 ? duration : (ayahs.length ? ayahs[ayahs.length - 1].endTime : 1);
+
+  // ---------- live refs (avoid stale closures inside the pointermove handler) ----------
+  const ayahsRef = useRef(ayahs);
+  useEffect(() => { ayahsRef.current = ayahs; }, [ayahs]);
+
+  const currentTimeRef = useRef(currentTime);
+  useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
+
+  const safeDurationRef = useRef(safeDuration);
+  useEffect(() => { safeDurationRef.current = safeDuration; }, [safeDuration]);
+
+  const onUpdateRef = useRef(onUpdate);
+  useEffect(() => { onUpdateRef.current = onUpdate; }, [onUpdate]);
 
   useEffect(() => {
     const el = trackRef.current;
@@ -74,30 +103,48 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
     if (!track) return 0;
     const rect = track.getBoundingClientRect();
     const pct = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    return Number((pct * safeDuration).toFixed(2));
-  }, [safeDuration]);
+    return Number((pct * safeDurationRef.current).toFixed(2));
+  }, []);
 
+  // Stable across the whole component lifetime — always reads *live* data via refs,
+  // so a single continuous drag never fights a stale snapshot of `ayahs`.
   const handlePointerMove = useCallback((e: PointerEvent) => {
     const drag = dragRef.current;
     if (!drag) return;
-    const list = [...ayahs];
+
+    const liveAyahs = ayahsRef.current;
+    const liveDuration = safeDurationRef.current;
+    const liveCurrentTime = currentTimeRef.current;
+    const list = [...liveAyahs];
+
+    const trackPxWidth = trackRef.current?.getBoundingClientRect().width || 1000;
+    const snapThresholdSec = (liveDuration / trackPxWidth) * 10; // ~10px magnetic radius
+
+    // Snap targets: playhead + every OTHER ayah's start/end (skip the one being dragged)
+    const snapTargets: number[] = [liveCurrentTime];
+    liveAyahs.forEach((a, idx) => {
+      if (idx === drag.index) return;
+      snapTargets.push(a.startTime, a.endTime);
+    });
 
     if (drag.kind === 'resize') {
       const item = { ...list[drag.index] };
       const prev = list[drag.index - 1];
       const next = list[drag.index + 1];
-      const t = timeFromClientX(e.clientX);
+      const raw = timeFromClientX(e.clientX);
+      const { value: t, snapped } = snapTo(raw, snapTargets, snapThresholdSec);
 
       if (drag.edge === 'start') {
         const min = prev ? prev.endTime + 0.05 : 0;
         const max = item.endTime - 0.1;
-        item.startTime = Math.min(max, Math.max(min, t));
+        item.startTime = Number(Math.min(max, Math.max(min, t)).toFixed(2));
       } else {
         const min = item.startTime + 0.1;
-        const max = next ? next.startTime - 0.05 : safeDuration;
-        item.endTime = Math.max(min, Math.min(max, t));
+        const max = next ? next.startTime - 0.05 : liveDuration;
+        item.endTime = Number(Math.max(min, Math.min(max, t)).toFixed(2));
       }
       list[drag.index] = item;
+      setSnapGuide(snapped);
     } else {
       // Whole-segment move: keep duration fixed, shift both start & end.
       const item = { ...list[drag.index] };
@@ -105,21 +152,48 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
       const prev = list[drag.index - 1];
       const next = list[drag.index + 1];
       const rawStart = timeFromClientX(e.clientX) - drag.grabOffset;
+      const rawEnd = rawStart + dur;
+
+      // Try snapping either edge; whichever is closer wins.
+      const startSnap = snapTo(rawStart, snapTargets, snapThresholdSec);
+      const endSnap = snapTo(rawEnd, snapTargets, snapThresholdSec);
+
+      let newStart = rawStart;
+      let guide: number | null = null;
+      if (startSnap.snapped !== null && endSnap.snapped !== null) {
+        const startDist = Math.abs(rawStart - startSnap.value);
+        const endDist = Math.abs(rawEnd - endSnap.value);
+        if (startDist <= endDist) {
+          newStart = startSnap.value;
+          guide = startSnap.snapped;
+        } else {
+          newStart = endSnap.value - dur;
+          guide = endSnap.snapped;
+        }
+      } else if (startSnap.snapped !== null) {
+        newStart = startSnap.value;
+        guide = startSnap.snapped;
+      } else if (endSnap.snapped !== null) {
+        newStart = endSnap.value - dur;
+        guide = endSnap.snapped;
+      }
 
       const min = prev ? prev.endTime + 0.05 : 0;
-      const max = (next ? next.startTime - 0.05 : safeDuration) - dur;
-      const newStart = Math.min(Math.max(min, rawStart), Math.max(min, max));
+      const max = (next ? next.startTime - 0.05 : liveDuration) - dur;
+      newStart = Math.min(Math.max(min, newStart), Math.max(min, max));
 
       item.startTime = Number(newStart.toFixed(2));
       item.endTime = Number((newStart + dur).toFixed(2));
       list[drag.index] = item;
+      setSnapGuide(guide);
     }
 
-    onUpdate(list);
-  }, [ayahs, onUpdate, safeDuration, timeFromClientX]);
+    onUpdateRef.current(list);
+  }, [timeFromClientX]);
 
   const stopDrag = useCallback(() => {
     dragRef.current = null;
+    setSnapGuide(null);
     window.removeEventListener('pointermove', handlePointerMove);
     window.removeEventListener('pointerup', stopDrag);
   }, [handlePointerMove]);
@@ -134,7 +208,7 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
   const startMove = (index: number) => (e: React.PointerEvent) => {
     e.stopPropagation();
     const grabTime = timeFromClientX(e.clientX);
-    dragRef.current = { kind: 'move', index, grabOffset: grabTime - ayahs[index].startTime };
+    dragRef.current = { kind: 'move', index, grabOffset: grabTime - ayahsRef.current[index].startTime };
     setExpanded(index);
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', stopDrag);
@@ -151,6 +225,7 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
   };
 
   const playheadPct = safeDuration > 0 ? Math.min(100, (currentTime / safeDuration) * 100) : 0;
+  const snapGuidePct = snapGuide !== null && safeDuration > 0 ? Math.min(100, (snapGuide / safeDuration) * 100) : null;
 
   // ---------- list ----------
 
@@ -197,25 +272,45 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
 
   return (
     <div className="space-y-4">
+      <style>{`
+        .ayah-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: #3f3f46 transparent;
+        }
+        .ayah-scroll::-webkit-scrollbar {
+          width: 6px;
+          height: 6px;
+        }
+        .ayah-scroll::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .ayah-scroll::-webkit-scrollbar-thumb {
+          background-color: #3f3f46;
+          border-radius: 9999px;
+        }
+        .ayah-scroll::-webkit-scrollbar-thumb:hover {
+          background-color: #52525b;
+        }
+      `}</style>
       {/* Toolbar */}
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-4 text-xs text-white/50">
+        <div className="flex items-center gap-4 text-xs text-gray-400 font-medium">
           <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#10b981' }} /> Matched ayah</span>
           <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#f59e0b' }} /> Bismillah</span>
           <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#71717a' }} /> Unmatched</span>
         </div>
-        <div className="flex items-center gap-2 text-xs text-white/50">
+        <div className="flex items-center gap-2 text-xs text-gray-400 font-medium">
           <span className="w-8 text-center">{zoom}x</span>
           <button
             onClick={() => setZoom((z) => Math.max(1, z - 1))}
             disabled={zoom <= 1}
-            className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 text-base leading-none"
+            className="w-7 h-7 flex items-center justify-center rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border border-zinc-200 disabled:opacity-35 text-base leading-none transition-all cursor-pointer font-bold"
           >
             −
           </button>
           <button
             onClick={() => setZoom((z) => Math.min(8, z + 1))}
-            className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 text-base leading-none"
+            className="w-7 h-7 flex items-center justify-center rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border border-zinc-200 text-base leading-none transition-all cursor-pointer font-bold"
           >
             +
           </button>
@@ -223,18 +318,18 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
       </div>
 
       {/* Big horizontal timeline */}
-      <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/30">
+      <div className="ayah-scroll overflow-x-auto rounded-xl border border-zinc-200 bg-zinc-50 shadow-inner">
         <div style={{ width: `${zoom * 100}%`, minWidth: '100%' }}>
           {/* Ruler */}
-          <div className="relative h-6 border-b border-white/10 select-none">
+          <div className="relative h-6 border-b border-zinc-200 select-none bg-zinc-100/60 rounded-t-xl">
             {ticks.map((t) => (
               <div
                 key={t}
                 className="absolute top-0 h-full flex flex-col items-start"
                 style={{ left: `${(t / safeDuration) * 100}%` }}
               >
-                <div className="w-px h-1.5 bg-white/20" />
-                <span className="text-[10px] text-white/40 font-mono -translate-x-1/2 mt-0.5">{formatTime(t)}</span>
+                <div className="w-px h-1.5 bg-zinc-400" />
+                <span className="text-[10px] text-zinc-500 font-mono -translate-x-1/2 mt-0.5">{formatTime(t)}</span>
               </div>
             ))}
           </div>
@@ -249,7 +344,7 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
             {ticks.map((t) => (
               <div
                 key={t}
-                className="absolute top-0 bottom-0 w-px bg-white/5 pointer-events-none"
+                className="absolute top-0 bottom-0 w-px bg-zinc-200 pointer-events-none"
                 style={{ left: `${(t / safeDuration) * 100}%` }}
               />
             ))}
@@ -269,14 +364,15 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
                   key={i}
                   onClick={(e) => { e.stopPropagation(); setExpanded(i); }}
                   onPointerDown={startMove(i)}
-                  className="absolute top-2 bottom-2 rounded-lg flex flex-col items-center justify-center overflow-hidden select-none shadow-lg cursor-grab active:cursor-grabbing transition-[outline] px-1"
+                  className="absolute top-2 bottom-2 rounded-lg flex flex-col items-center justify-center overflow-hidden select-none shadow-md cursor-grab active:cursor-grabbing transition-[outline] px-1 group"
                   style={{
+                    touchAction: 'none',
                     left: `${left}%`,
                     width: `${width}%`,
                     backgroundColor: colorFor(ayah),
-                    opacity: isSelected ? 1 : 0.82,
-                    outline: isSelected ? '3px solid white' : '2px solid rgba(0,0,0,0.2)',
-                    outlineOffset: '-2px',
+                    opacity: isSelected ? 1 : 0.85,
+                    outline: isSelected ? '2px solid #2563eb' : '1px solid rgba(0,0,0,0.1)',
+                    outlineOffset: '1px',
                   }}
                   title={`${ayah.surahEnglishName || ''} ${label} · ${formatTime(ayah.startTime)}–${formatTime(ayah.endTime)}`}
                 >
@@ -290,19 +386,29 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
                   {/* Resize handles — big, obvious grab strips */}
                   <div
                     onPointerDown={startResize(i, 'start')}
-                    className="absolute left-0 top-0 bottom-0 w-3 cursor-ew-resize bg-white/0 hover:bg-white/40 flex items-center justify-center"
+                    className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-black/10 flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"
                   >
-                    <div className="w-0.5 h-6 rounded-full bg-white/70" />
+                    <div className="w-1 h-8 rounded-full bg-white shadow-sm" />
                   </div>
                   <div
                     onPointerDown={startResize(i, 'end')}
-                    className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize bg-white/0 hover:bg-white/40 flex items-center justify-center"
+                    className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-black/10 flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"
                   >
-                    <div className="w-0.5 h-6 rounded-full bg-white/70" />
+                    <div className="w-1 h-8 rounded-full bg-white shadow-sm" />
                   </div>
                 </div>
               );
             })}
+
+            {/* Magnetic snap guide — CapCut-style pink line that appears when close to a snap target */}
+            {snapGuidePct !== null && (
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-pink-500 pointer-events-none z-30 shadow-[0_0_8px_rgba(236,72,153,0.9)]"
+                style={{ left: `${snapGuidePct}%` }}
+              >
+                <div className="absolute -top-1 -left-[3px] w-2 h-2 rotate-45 bg-pink-500" />
+              </div>
+            )}
 
             {/* Playhead */}
             <div
@@ -310,58 +416,63 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
               style={{ left: `${playheadPct}%` }}
             >
               <div className="absolute -top-0.5 -left-[5px] w-3 h-3 rounded-full bg-red-500" />
+              {safeDuration > 0 && (
+                <div className="absolute top-full mt-1 -left-4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow whitespace-nowrap">
+                  {formatTime(currentTime)}
+                </div>
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      <p className="text-[11px] text-white/30">
-        Drag the middle of a block to move it, drag an edge to resize it, click empty space to seek.
+      <p className="text-[11px] text-gray-400 font-medium">
+        Drag the middle of a block to move it, drag an edge to resize it, click empty space to seek. Blocks snap to the playhead and to neighboring ayah edges.
       </p>
 
       {/* Detail list */}
-      <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+      <div className="ayah-scroll space-y-2 max-h-96 overflow-y-auto pr-1 mt-4">
         {ayahs.map((ayah, i) => (
-          <div key={i} className={`bg-white/5 rounded-xl overflow-hidden border transition-colors ${expanded === i ? 'border-emerald-500/50' : 'border-white/10'}`}>
+          <div key={i} className={`bg-white rounded-xl overflow-hidden border transition-all shadow-sm ${expanded === i ? 'border-emerald-500 ring-1 ring-emerald-500' : 'border-zinc-200'}`}>
             <div
-              className="flex items-center gap-3 p-3 cursor-pointer hover:bg-white/5 transition-colors"
+              className="flex items-center gap-3 p-3 cursor-pointer hover:bg-zinc-50 transition-colors"
               onClick={() => setExpanded(expanded === i ? null : i)}
             >
               <div
-                className="w-7 h-7 rounded-lg text-xs flex items-center justify-center font-bold flex-shrink-0"
-                style={{ backgroundColor: `${colorFor(ayah)}33`, color: colorFor(ayah) }}
+                className="w-7 h-7 rounded-lg text-xs flex items-center justify-center font-bold flex-shrink-0 shadow-sm"
+                style={{ backgroundColor: `${colorFor(ayah)}20`, color: colorFor(ayah) }}
               >
                 {ayah.ayahNumber ?? '?'}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs text-white/80 truncate">{ayah.surahEnglishName || (ayah.isBismillah ? 'Bismillah' : 'Unmatched')}</p>
-                <p className="text-[10px] text-white/30">{formatTime(ayah.startTime)} – {formatTime(ayah.endTime)}</p>
+                <p className="text-xs text-zinc-800 font-semibold truncate">{ayah.surahEnglishName || (ayah.isBismillah ? 'Bismillah' : 'Unmatched')}</p>
+                <p className="text-[10px] text-zinc-500">{formatTime(ayah.startTime)} – {formatTime(ayah.endTime)}</p>
               </div>
               <p
-                className="text-sm text-right flex-shrink-0 max-w-[140px] truncate"
+                className="text-sm text-right flex-shrink-0 max-w-[140px] truncate font-bold text-zinc-800"
                 style={{ fontFamily: '"Scheherazade New", serif', direction: 'rtl' }}
               >
                 {ayah.arabic}
               </p>
               <button
                 onClick={(e) => { e.stopPropagation(); remove(i); }}
-                className="text-white/20 hover:text-red-400 transition-colors text-xs flex-shrink-0 p-1"
+                className="text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors text-xs flex-shrink-0 p-1.5 cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
             {expanded === i && (
-              <div className="px-3 pb-3 border-t border-white/10 pt-2.5 space-y-3">
+              <div className="px-3 pb-3 border-t border-zinc-150 pt-2.5 space-y-3 bg-zinc-50/50">
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
-                    <label className="text-[9px] text-white/40 uppercase tracking-wider block font-semibold">
+                    <label className="text-[9px] text-zinc-400 uppercase tracking-wider block font-bold">
                       Arabic Text
                     </label>
                     <button
                       onClick={() => handleDetect(i)}
                       disabled={detecting !== null}
-                      className="text-[10px] text-emerald-400 hover:text-emerald-300 disabled:text-white/20 font-medium transition-colors"
+                      className="text-[10px] text-emerald-600 hover:text-emerald-700 disabled:text-zinc-400 font-semibold transition-colors cursor-pointer"
                     >
                       {detecting === i ? 'Detecting…' : 'Re-match ayah'}
                     </button>
@@ -369,27 +480,27 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
                   <textarea
                     value={ayah.arabic}
                     onChange={(e) => updateField(i, 'arabic', e.target.value)}
-                    className="w-full bg-zinc-900/80 text-white border border-white/10 rounded p-2 text-sm outline-none focus:border-emerald-500 transition-colors leading-relaxed"
+                    className="w-full bg-white text-zinc-900 font-medium border border-zinc-200 rounded-lg p-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all leading-relaxed shadow-inner"
                     style={{ fontFamily: '"Scheherazade New", serif', direction: 'rtl' }}
                     rows={2}
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[9px] text-white/40 uppercase tracking-wider block font-semibold">
+                  <label className="text-[9px] text-zinc-400 uppercase tracking-wider block font-bold">
                     Translation
                   </label>
                   <textarea
                     value={ayah.translation}
                     onChange={(e) => updateField(i, 'translation', e.target.value)}
-                    className="w-full bg-zinc-900/80 text-white border border-white/10 rounded p-2 text-xs outline-none focus:border-emerald-500 transition-colors leading-relaxed"
+                    className="w-full bg-white text-zinc-900 border border-zinc-200 rounded-lg p-2 text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all leading-relaxed shadow-inner"
                     rows={2}
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label className="text-[9px] text-white/40 uppercase tracking-wider block font-semibold">
+                    <label className="text-[9px] text-zinc-400 uppercase tracking-wider block font-bold">
                       Start Time (sec)
                     </label>
                     <input
@@ -398,11 +509,11 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
                       min="0"
                       value={ayah.startTime}
                       onChange={(e) => updateField(i, 'startTime', parseFloat(e.target.value) || 0)}
-                      className="w-full bg-zinc-900/80 text-white border border-white/10 rounded px-2 py-1 text-xs outline-none focus:border-emerald-500 transition-colors"
+                      className="w-full bg-white text-zinc-950 font-mono font-medium border border-zinc-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-inner"
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[9px] text-white/40 uppercase tracking-wider block font-semibold">
+                    <label className="text-[9px] text-zinc-400 uppercase tracking-wider block font-bold">
                       End Time (sec)
                     </label>
                     <input
@@ -411,7 +522,7 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
                       min="0"
                       value={ayah.endTime}
                       onChange={(e) => updateField(i, 'endTime', parseFloat(e.target.value) || 0)}
-                      className="w-full bg-zinc-900/80 text-white border border-white/10 rounded px-2 py-1 text-xs outline-none focus:border-emerald-500 transition-colors"
+                      className="w-full bg-white text-zinc-950 font-mono font-medium border border-zinc-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-inner"
                     />
                   </div>
                 </div>
@@ -420,7 +531,7 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
           </div>
         ))}
         {ayahs.length === 0 && (
-          <p className="text-xs text-white/30 text-center py-4">No ayahs detected</p>
+          <p className="text-xs text-gray-500 font-medium text-center py-4">No ayahs detected</p>
         )}
       </div>
     </div>

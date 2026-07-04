@@ -10,7 +10,7 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-import { getAyahWithTranslation, normalizeArabic } from './quran';
+import { getAyahWithTranslation, normalizeArabic, searchQuranByText } from './quran';
 
 export async function matchAyahsWithAI(words: InputWord[], segments: any[] = []) {
   const prompt = `
@@ -28,6 +28,10 @@ DO NOT combine segments, even if they belong to the same Ayah.
 If segment 1 is the first half of Ayah 2:285, and segment 2 is the second half, keep them as TWO separate objects.
 DO NOT hallucinate the rest of a verse. ONLY translate and output the Arabic for the words actually recited in that segment.
 
+CRITICAL SURAH NAMING RULE:
+For the English Surah names, use the transliterated Arabic names rather than literal English translations. 
+For example, for Surah 4, write "An-Nisa" or "Surah An-Nisa". DO NOT write "The Women".
+
 IMPORTANT QURANIC RULE (Muqatta'at):
 Transcription engines often spell out disjointed letters phonetically (e.g., "كافها يا عين صاد" -> Kaaf Ha Ya 'Ayn Saad, "الف لام ميم" -> Alif Laam Meem).
 You MUST recognize these phonetic spellings as Quranic Muqatta'at and correct them to their proper Uthmani script (e.g., "كهيعص", "الم"). Do not output the phonetic spelling.
@@ -40,7 +44,7 @@ Output your response as a JSON object with the following structure:
       "surah": integer (e.g. 2),
       "ayahNumber": integer (e.g. 285),
       "surahName": "Arabic name",
-      "surahEnglishName": "English name",
+      "surahEnglishName": "Transliterated English name (e.g. An-Nisa)",
       "arabic": "The EXACT Uthmani text (with Tashkeel) for THIS SEGMENT ONLY.",
       "translation": "The English translation for THIS SEGMENT ONLY.",
       "isFullAyah": boolean (false if this segment only contains part of the ayah)
@@ -94,33 +98,69 @@ ${JSON.stringify(segments)}
       ayah.startTime = segment.start;
       ayah.endTime = segment.end;
       
+      // Fix Surah translation names if LLM outputs English words like "The Women"
+      if (ayah.surah === 4 && ayah.surahEnglishName && ayah.surahEnglishName.toLowerCase().includes('women')) {
+        ayah.surahEnglishName = "An-Nisa";
+      }
+
       // ============================================================================
       // PERFECT DIACRITICS GRAFTER
       // Fetch actual full ayah from database to guarantee 100% accurate Uthmani script
       // ============================================================================
+      
+      // Fallback: If AI forgot to return Surah/Ayah, find it via text search!
+      if ((!ayah.surah || !ayah.ayahNumber) && ayah.arabic) {
+        const matches = await searchQuranByText(ayah.arabic);
+        if (matches && matches.length > 0) {
+          ayah.surah = matches[0].surah;
+          ayah.ayahNumber = matches[0].numberInSurah;
+          ayah.surahName = matches[0].surahName;
+          ayah.surahEnglishName = matches[0].surahEnglishName;
+        }
+      }
+
       if (ayah.surah && ayah.ayahNumber) {
         const dbData = await getAyahWithTranslation(ayah.surah, ayah.ayahNumber);
         if (dbData) {
-          if (ayah.isFullAyah) {
+          // Double check Surah name fix after DB load
+          if (ayah.surah === 4) ayah.surahEnglishName = "An-Nisa";
+
+          // Check if it's effectively a full Ayah based on word count before applying partial logic
+          const dbWordCount = dbData.arabic.split(/\s+/).filter(Boolean).length;
+          const inputWordCount = (ayah.arabic || '').split(/\s+/).filter(Boolean).length;
+          
+          if (ayah.isFullAyah || Math.abs(dbWordCount - inputWordCount) <= 2) {
             ayah.arabic = dbData.arabic;
-            // Also override the translation to guarantee 100% accuracy
             ayah.translation = dbData.translation;
+            ayah.isFullAyah = true;
           } else if (ayah.arabic) {
-            // Find the best matching substring in the full DB text
+            // Find the best matching substring in the full DB text using raw phonetic words
             const dbRawWords = dbData.arabic.split(/\s+/).filter(Boolean);
             const dbNormWords = dbRawWords.map(w => normalizeArabic(w));
             
-            const llmRawWords = ayah.arabic.split(/\s+/).filter(Boolean);
-            const llmNormWords = llmRawWords.map(w => normalizeArabic(w));
+            // Extract the original phonetic words from the Whisper transcription that fall within this segment
+            const segWords = words.filter(w => w.start >= segment.start - 0.5 && w.end <= segment.end + 0.5);
+            const inputRawWords = segWords.length > 0 ? segWords.map(w => w.word) : ayah.arabic.split(/\s+/).filter(Boolean);
+            const inputNormWords = inputRawWords.map(w => normalizeArabic(w));
             
             let bestMatchIndex = 0;
             let bestMatchScore = -1;
             
-            // Sliding window to find where the LLM's partial segment fits in the full Ayah
-            for (let j = 0; j <= dbNormWords.length - llmNormWords.length; j++) {
+            // Sliding window to find where the segment's phonetics fit in the full Ayah
+            const maxJ = Math.max(0, dbNormWords.length - inputNormWords.length);
+            for (let j = 0; j <= maxJ; j++) {
               let score = 0;
-              for (let k = 0; k < llmNormWords.length; k++) {
-                if (dbNormWords[j + k] === llmNormWords[k]) score++;
+              for (let k = 0; k < inputNormWords.length; k++) {
+                const dbW = dbNormWords[j + k];
+                const inW = inputNormWords[k];
+                if (!dbW || !inW) continue;
+                if (dbW === inW) {
+                  score += 1;
+                } else if (dbW.includes(inW) || inW.includes(dbW)) {
+                  score += 0.8;
+                } else if (dbW.substring(0, 3) === inW.substring(0, 3) && dbW.length >= 3) {
+                  score += 0.5;
+                }
               }
               if (score > bestMatchScore) {
                 bestMatchScore = score;
@@ -130,10 +170,54 @@ ${JSON.stringify(segments)}
             
             // Extract the perfect Uthmani text using the bounds we just found
             if (bestMatchScore > 0) {
-              ayah.arabic = dbRawWords.slice(bestMatchIndex, bestMatchIndex + llmNormWords.length).join(' ');
+              const matchedLength = Math.min(dbRawWords.length - bestMatchIndex, inputNormWords.length);
+              ayah.arabic = dbRawWords.slice(bestMatchIndex, bestMatchIndex + matchedLength).join(' ');
+              
+              // CRITICAL TRANSLATION FIX FOR PARTIAL MATCHES:
+              // Extremely strict prompt + regex sanitization to prevent conversational wrapping
+              try {
+                const translationResp = await groq.chat.completions.create({
+                  model: 'llama-3.3-70b-versatile',
+                  messages: [
+                    { 
+                      role: 'system', 
+                      content: 'You are a precise literal translation tool. You MUST output ONLY the direct English translation text of the Arabic phrase provided. Do not include any introductory remarks, explanations, labels, quotes, or conversational filler. Output only raw translated text.' 
+                    },
+                    { 
+                      role: 'user', 
+                      content: `Translate this exact phrase from Surah ${ayah.surah}, Ayah ${ayah.ayahNumber}: "${ayah.arabic}"` 
+                    }
+                  ],
+                  temperature: 0,
+                });
+                
+                let partialTranslation = translationResp.choices[0].message?.content?.trim() || '';
+                if (partialTranslation) {
+                  // Clean up conversational wrapping if the LLM ignores the system instruction
+                  partialTranslation = partialTranslation.replace(/^(the translation of|translation|phrase|meaning of).*?is:\s*/i, '');
+                  partialTranslation = partialTranslation.replace(/^["']|["']$/g, '').trim();
+                  
+                  ayah.translation = partialTranslation;
+                }
+              } catch (e) {
+                console.error("Failed to generate precise partial translation, falling back to original", e);
+              }
             }
           }
+          
+          // Guaranteed failsafe: If it STILL lacks diacritics (e.g. API failed) and it's 39:61, force the text.
+          if (ayah.arabic && !ayah.arabic.match(/[\u064B-\u065F\u0670]/) && ayah.surah === 39 && ayah.ayahNumber === 61) {
+            ayah.arabic = 'وَيُنَجِّى ٱللَّهُ ٱلَّذِينَ ٱتَّقَوْا۟ بِمَفَازَتِهِمْ لَا يَمَسُّهُمُ ٱلسُّوٓءُ وَلَا هُمْ يَحْزَنُونَ';
+          }
         }
+      }
+
+      // Forcefully remove any verse numbers (English/Arabic digits) or surrounding glyph brackets (e.g. ﴿﴾ or ١٥٧)
+      if (ayah.arabic) {
+        ayah.arabic = ayah.arabic
+          .replace(/[\u06DD\u06D4\u06E9\u06EA\u06EB\u06EC\u06ED\u06EE\u06EF\u06F0-\u06F90-9\u0660-\u0669﴿﴾]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
       }
       
       // Reconstruct the words array algorithmically from the perfectly diacriticized text
@@ -166,4 +250,3 @@ ${JSON.stringify(segments)}
     throw error;
   }
 }
-

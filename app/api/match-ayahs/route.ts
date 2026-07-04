@@ -97,6 +97,16 @@ export async function POST(req: NextRequest) {
     const contentType = req.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
       const body = await req.json();
+
+      if (body.text) {
+        const ayahs = await matchAyahsWithAI([], [{ id: 0, start: 0, end: 10, text: body.text }]);
+        if (ayahs.length > 0) {
+          return NextResponse.json({ success: true, ayah: ayahs[0] });
+        } else {
+          return NextResponse.json({ success: false, error: 'No matching ayah found.' });
+        }
+      }
+
       const words: InputWord[] = Array.isArray(body.words) ? body.words : [];
       const segments = Array.isArray(body.segments) ? body.segments : [];
 

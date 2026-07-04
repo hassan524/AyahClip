@@ -1,10 +1,15 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import Navbar from '@/components/Navbar';
+import LandingHero from '@/components/LandingHero';
+import HowItWorks from '@/components/HowItWorks';
+import LandingFooter from '@/components/LandingFooter';
+import QuranQuoteToast from '@/components/QuranQuoteToast';
 import VideoUploader from '@/components/VideoUploader';
 import BackgroundPicker from '@/components/BackgroundPicker';
 import AyahTimeline from '@/components/AyahTimeline';
-import VideoPreview from '@/components/VideoPreview';
+import VideoPreview, { TextPosition, AspectRatio } from '@/components/VideoPreview';
 import ExportPanel from '@/components/ExportPanel';
 
 export type BackgroundConfig =
@@ -39,8 +44,6 @@ export interface MatchedAyah {
   words?: WordTimestamp[];
 }
 
-
-
 export type Step = 'upload' | 'processing' | 'edit' | 'export';
 export type Feature = 'create' | 'upload' | 'record';
 
@@ -54,6 +57,13 @@ const ENGLISH_FONTS = [
   'Inter', 'Roboto', 'Playfair Display', 'Outfit',
   'Montserrat', 'Poppins', 'Lato', 'Open Sans',
   'Quicksand', 'Caveat', 'Cormorant Garamond', 'Cinzel'
+];
+
+const ASPECT_RATIO_OPTIONS: { value: AspectRatio; label: string }[] = [
+  { value: '9:16', label: 'Mobile (9:16)' },
+  { value: '16:9', label: 'Desktop (16:9)' },
+  { value: '1:1', label: 'Square (1:1)' },
+  { value: '4:5', label: 'Portrait (4:5)' },
 ];
 
 function bufferToWav(buffer: AudioBuffer): Blob {
@@ -92,6 +102,13 @@ function writeString(view: DataView, offset: number, str: string) {
   for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
 }
 
+function normalizeArabicWord(input: string): string {
+  return input
+    .replace(/[^\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export default function Home() {
   const [step, setStep] = useState<Step>('upload');
   const [activeFeature, setActiveFeature] = useState<Feature>('upload');
@@ -99,29 +116,33 @@ export default function Home() {
   const [videoUrl, setVideoUrl] = useState<string>('');
   const [videoDuration, setVideoDuration] = useState(0);
   const [ayahs, setAyahs] = useState<MatchedAyah[]>([]);
-  const [background, setBackground] = useState<BackgroundConfig>({ type: 'color', value: '#0a0a1a' });
   const [processingStatus, setProcessingStatus] = useState('');
   const [error, setError] = useState('');
-  const [textColor, setTextColor] = useState('#ffffff');
   const [showTranslation, setShowTranslation] = useState(true);
   const [videoOpacity, setVideoOpacity] = useState(1.0);
   const [overlayType, setOverlayType] = useState<'none' | 'bottom' | 'full'>('bottom');
-  const [overlayOpacity, setOverlayOpacity] = useState(0.8);
   const [arabicFont, setArabicFont] = useState('Scheherazade New');
   const [englishFont, setEnglishFont] = useState('Inter');
   const [arabicAlign, setArabicAlign] = useState<'center' | 'right'>('center');
   const [englishAlign, setEnglishAlign] = useState<'center' | 'left'>('center');
-  const [verticalPosition, setVerticalPosition] = useState<'center' | 'bottom'>('bottom');
-  const [arabicFontSize, setArabicFontSize] = useState(36);
-  const [englishFontSize, setEnglishFontSize] = useState(20);
   const [wordHighlight, setWordHighlight] = useState(false);
+  const [quotesEnabled, setQuotesEnabled] = useState(true);
 
-  // NEW: tracks live playback position (fed by VideoPreview) so the
-  // AyahTimeline can draw its red playhead line in sync with the video.
+  const [background, setBackground] = useState<BackgroundConfig>({ type: 'color', value: '#000000' });
+  const [textColor, setTextColor] = useState('#ffffff');
+  const [overlayOpacity, setOverlayOpacity] = useState(0);
+  const [verticalPosition, setVerticalPosition] = useState<'center' | 'bottom'>('center');
+  const [arabicFontSize, setArabicFontSize] = useState(27);
+  const [englishFontSize, setEnglishFontSize] = useState(20);
+
+  // ---- Draggable text positions (ONE global position each, applies to every ayah) ----
+  const [arabicPosition, setArabicPosition] = useState<TextPosition | null>(null);
+  const [englishPosition, setEnglishPosition] = useState<TextPosition | null>(null);
+
+  // ---- Aspect ratio / format ----
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('9:16');
+
   const [currentTime, setCurrentTime] = useState(0);
-  // NEW: clicking/dragging in AyahTimeline sets this, VideoPreview reacts
-  // to it and actually seeks the <video> element. `token` forces the effect
-  // to re-fire even if the same timestamp is requested twice in a row.
   const [seekRequest, setSeekRequest] = useState<{ time: number; token: number } | null>(null);
 
   const handleTimelineSeek = useCallback((time: number) => {
@@ -208,62 +229,97 @@ export default function Home() {
         const { segments, words } = transcribeData;
         const offsetSec = chunkIdx * chunkSizeSec;
 
+        const chunkSegments: any[] = [];
         if (segments && Array.isArray(segments)) {
           for (const seg of segments) {
-            allSegments.push({ ...seg, start: seg.start + offsetSec, end: seg.end + offsetSec });
+            if (
+              Number.isFinite(Number(seg.start)) &&
+              Number.isFinite(Number(seg.end)) &&
+              Number(seg.end) > Number(seg.start)
+            ) {
+              const normalizedSeg = {
+                ...seg,
+                start: Number(seg.start) + offsetSec,
+                end: Number(seg.end) + offsetSec,
+              };
+              allSegments.push(normalizedSeg);
+              chunkSegments.push(normalizedSeg);
+            }
           }
         }
-        if (words && Array.isArray(words)) {
+
+        if (words && Array.isArray(words) && words.length > 0) {
           for (const w of words) {
-            allWords.push({ ...w, start: w.start + offsetSec, end: w.end + offsetSec });
+            if (
+              typeof w.word === 'string' &&
+              w.word.trim() &&
+              Number.isFinite(Number(w.start)) &&
+              Number.isFinite(Number(w.end)) &&
+              Number(w.end) > Number(w.start)
+            ) {
+              allWords.push({
+                word: w.word.trim(),
+                start: Number(w.start) + offsetSec,
+                end: Number(w.end) + offsetSec,
+              });
+            }
+          }
+        } else {
+          for (const seg of chunkSegments) {
+            const splitWords = (seg.text || '').split(/\s+/).filter(Boolean);
+            if (splitWords.length === 0) continue;
+
+            const segDuration = seg.end - seg.start;
+            const uniformDuration = segDuration / splitWords.length;
+
+            for (let i = 0; i < splitWords.length; i++) {
+              const cleaned = normalizeArabicWord(splitWords[i]);
+              if (!cleaned) continue;
+
+              allWords.push({
+                word: cleaned,
+                start: Number((seg.start + i * uniformDuration).toFixed(3)),
+                end: Number((seg.start + (i + 1) * uniformDuration).toFixed(3)),
+              });
+            }
           }
         }
       }
 
       if (allSegments.length === 0) {
-        throw new Error('No speech detected. Make sure video has clear Quran recitation.');
+        throw new Error('No audio transcription segments could be extracted. The file may be silent or corrupted.');
       }
 
-
-      setProcessingStatus('Matching ayahs from Quran database...');
+      setProcessingStatus('Matching ayahs from Quran...');
       const matchRes = await fetch('/api/match-ayahs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           words: allWords,
           segments: allSegments,
-          videoDuration: duration
         }),
       });
 
       const matchText = await matchRes.text();
-
       let matchData: any;
       try {
         matchData = JSON.parse(matchText);
       } catch {
         console.error('Non-JSON from match-ayahs:', matchText.slice(0, 300));
-        throw new Error('Ayah matching server error');
+        throw new Error('Ayah matching server encountered an unreadable response.');
       }
 
       if (!matchRes.ok) {
-        throw new Error(matchData.error || 'Ayah matching failed');
+        throw new Error(matchData?.error || 'Ayah matching pipeline failed.');
       }
-
 
       const matched = Array.isArray(matchData?.ayahs) ? matchData.ayahs : [];
 
-      if (!matchRes.ok) {
-        throw new Error(matchData?.error || 'Ayah matching failed');
-      }
-
       if (matched.length === 0) {
         throw new Error(
-          matchData?.error ||
-          'Could not identify Quran ayahs. Try a clearer recording.'
+          matchData?.error || 'Could not identify matching Quran ayahs from this recording.'
         );
       }
-
 
       setAyahs(matched);
       setStep('edit');
@@ -284,104 +340,37 @@ export default function Home() {
     setError('');
     setCurrentTime(0);
     setSeekRequest(null);
+    setArabicPosition(null);
+    setEnglishPosition(null);
   };
 
-  // Show hero only on initial upload step
-  const showHero = step === 'upload' && !videoUrl;
+  const scrollToUploader = () => {
+    document.querySelector('#uploader')?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const showLanding = step === 'upload' && !videoUrl;
 
   return (
-    <main className="min-h-screen bg-[#070714] text-white">
-      <header className="border-b border-white/10 px-4 sm:px-6 py-4 sticky top-0 z-50 backdrop-blur-sm bg-[#070714]/80">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center text-sm font-bold">آ</div>
-            <span className="font-semibold text-lg tracking-tight">AyahClip</span>
-          </div>
-          {step !== 'upload' && (
-            <button onClick={reset} className="text-sm text-white/50 hover:text-white transition-colors">
-              ← Back Home
-            </button>
-          )}
-        </div>
-      </header>
+    <main className="min-h-screen bg-white text-zinc-900">
+      <Navbar
+        step={step}
+        onReset={reset}
+        quotesEnabled={quotesEnabled}
+        onToggleQuotes={() => setQuotesEnabled((v) => !v)}
+      />
 
-      {/* Hero Section */}
-      {showHero && (
-        <section className="relative overflow-hidden px-4 sm:px-6 py-16 sm:py-24">
-          {/* Gradient Background */}
-          <div className="absolute inset-0 -z-10">
-            <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/10 via-transparent to-teal-500/10" />
-            <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl" />
-            <div className="absolute bottom-0 left-0 w-96 h-96 bg-teal-500/5 rounded-full blur-3xl" />
-          </div>
+      <QuranQuoteToast enabled={quotesEnabled} />
 
-          <div className="max-w-5xl mx-auto text-center space-y-6 sm:space-y-8">
-            <div className="space-y-4">
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold leading-tight">
-                <span className="bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-400 bg-clip-text text-transparent">
-                  Transform Quran Recitation
-                </span>
-                <br />
-                <span className="text-white">Into Stunning Video Clips</span>
-              </h1>
-              <p className="text-lg sm:text-xl text-white/60 max-w-2xl mx-auto leading-relaxed">
-                AI-powered Quranic video editor. Automatically detect ayahs, add translations, customize backgrounds, and export in MP4. Perfect for content creators and educators.
-              </p>
-            </div>
-
-            {/* Feature Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-12 pt-8 border-t border-white/10">
-              {/* Feature 1 */}
-              <div className="group cursor-not-allowed opacity-50 hover:opacity-75 transition-opacity">
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-6 text-center space-y-3 h-full">
-                  <div className="text-4xl">📚</div>
-                  <h3 className="text-lg font-semibold text-white">Create Quranic Video</h3>
-                  <p className="text-sm text-white/50">Select Surah, ayah, translator & recitor</p>
-                  <div className="pt-2 text-xs text-white/30 italic">Coming Soon</div>
-                </div>
-              </div>
-
-              {/* Feature 2 - Active */}
-              <div className="md:scale-105">
-                <div className="bg-gradient-to-br from-emerald-500/20 to-teal-500/20 border border-emerald-500/50 rounded-2xl p-6 text-center space-y-3 h-full shadow-lg shadow-emerald-500/20">
-                  <div className="text-4xl">🎬</div>
-                  <h3 className="text-lg font-semibold text-white">Upload & Edit Video</h3>
-                  <p className="text-sm text-white/70">Add translations, change background</p>
-                  <div className="inline-block px-3 py-1 bg-emerald-500 text-white text-xs rounded-full font-medium">Active</div>
-                </div>
-              </div>
-
-              {/* Feature 3 */}
-              <div className="group cursor-not-allowed opacity-50 hover:opacity-75 transition-opacity">
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-6 text-center space-y-3 h-full">
-                  <div className="text-4xl">🎙️</div>
-                  <h3 className="text-lg font-semibold text-white">Record Recitation</h3>
-                  <p className="text-sm text-white/50">Record and auto-detect with translation</p>
-                  <div className="pt-2 text-xs text-white/30 italic">Coming Soon</div>
-                </div>
-              </div>
-            </div>
-
-            {/* CTA Button */}
-            <div className="pt-8">
-              <button
-                onClick={() => document.querySelector('#uploader')?.scrollIntoView({ behavior: 'smooth' })}
-                className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white font-bold rounded-xl transition-all duration-200 text-lg shadow-lg hover:shadow-emerald-500/25"
-              >
-                <span>Get Started</span>
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </section>
+      {showLanding && (
+        <>
+          <LandingHero onSelectUpload={scrollToUploader} />
+          <HowItWorks />
+        </>
       )}
 
-      {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         {error && (
-          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-md text-red-600 text-sm">
             {error}
           </div>
         )}
@@ -391,10 +380,10 @@ export default function Home() {
           <div id="uploader" className="space-y-8">
             {!videoUrl && (
               <>
-                <div className="text-center space-y-3 mb-8">
-                  <h2 className="text-2xl sm:text-3xl font-bold">Upload Your Quran Recitation</h2>
-                  <p className="text-white/50 max-w-2xl mx-auto">
-                    Upload any Quranic recitation video. Our AI will automatically detect ayahs and timestamps.
+                <div className="text-center space-y-2 mb-8">
+                  <h2 className="text-2xl font-bold text-emerald-950">Upload Your Quran Recitation</h2>
+                  <p className="text-zinc-500 max-w-2xl mx-auto text-sm">
+                    Upload a Quranic recitation video. Ayahs and timestamps will be detected automatically.
                   </p>
                 </div>
                 <div className="max-w-2xl mx-auto">
@@ -408,21 +397,23 @@ export default function Home() {
         {/* Processing Step */}
         {step === 'processing' && (
           <div className="flex flex-col items-center justify-center py-32 gap-6">
-            <div className="relative w-20 h-20">
-              <div className="absolute inset-0 rounded-full border-2 border-emerald-500/20 animate-ping" />
-              <div className="absolute inset-0 rounded-full border-2 border-t-emerald-400 animate-spin" />
-              <div className="absolute inset-0 flex items-center justify-center text-2xl">آ</div>
+            <div className="relative w-16 h-16">
+              <div className="absolute inset-0 rounded-full border-2 border-emerald-200" />
+              <div className="absolute inset-0 rounded-full border-2 border-t-emerald-700 animate-spin" />
+              <svg className="absolute inset-0 m-auto w-6 h-6 text-emerald-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
             </div>
             <div className="text-center">
-              <p className="text-white font-medium text-lg">{processingStatus}</p>
-              <p className="text-white/40 text-sm mt-1">This may take a moment for longer videos</p>
+              <p className="text-emerald-950 font-medium">{processingStatus}</p>
+              <p className="text-zinc-400 text-sm mt-1">This may take a moment for longer videos</p>
             </div>
           </div>
         )}
 
-        {/* Edit Step */}
+        {/* Edit Step — stacked column: video on top, settings below. Same layout on mobile and desktop. */}
         {step === 'edit' && videoUrl && (
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6">
+          <div className="flex flex-col gap-6 max-w-2xl mx-auto">
             <VideoPreview
               videoUrl={videoUrl}
               ayahs={ayahs}
@@ -443,38 +434,53 @@ export default function Home() {
               wordHighlight={wordHighlight}
               onTimeUpdate={setCurrentTime}
               seekTo={seekRequest}
+              aspectRatio={aspectRatio}
+              arabicPosition={arabicPosition}
+              englishPosition={englishPosition}
+              onArabicPositionChange={setArabicPosition}
+              onEnglishPositionChange={setEnglishPosition}
             />
 
-            {/* Edit Panel */}
-            <div className="space-y-4 max-h-[calc(100vh-200px)] overflow-y-auto">
-              {/* Background */}
-              <div className="bg-white/5 rounded-2xl p-4 border border-white/10 space-y-4">
-                <h3 className="text-sm font-semibold text-white/70 uppercase tracking-wider">Background</h3>
+            <div className="space-y-4">
+              <div className="bg-white rounded-md p-4 border border-zinc-200 space-y-4">
+                <h3 className="text-sm font-semibold text-emerald-900 uppercase tracking-wide">Format</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {ASPECT_RATIO_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setAspectRatio(opt.value)}
+                      className={`px-3 py-2 rounded text-xs transition-colors ${aspectRatio === opt.value ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-md p-4 border border-zinc-200 space-y-4">
+                <h3 className="text-sm font-semibold text-emerald-900 uppercase tracking-wide">Background</h3>
                 <BackgroundPicker value={background} onChange={setBackground} />
                 {background.type !== 'video' && (
-                  <div className="space-y-1.5 pt-2 border-t border-white/5">
-                    <div className="flex justify-between text-xs text-white/60">
+                  <div className="space-y-1.5 pt-2 border-t border-zinc-100">
+                    <div className="flex justify-between text-xs text-zinc-500">
                       <span>Video opacity</span>
                       <span>{Math.round(videoOpacity * 100)}%</span>
                     </div>
                     <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.05"
+                      type="range" min="0" max="1" step="0.05"
                       value={videoOpacity}
                       onChange={(e) => setVideoOpacity(parseFloat(e.target.value))}
-                      className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
                     />
                   </div>
                 )}
-                <div className="space-y-3 pt-2 border-t border-white/5">
+                <div className="space-y-3 pt-2 border-t border-zinc-100">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-white/60">Overlay type</span>
+                    <span className="text-zinc-500">Overlay type</span>
                     <select
                       value={overlayType}
                       onChange={(e) => setOverlayType(e.target.value as any)}
-                      className="bg-zinc-800 text-white border border-white/10 rounded px-2 py-1 text-xs outline-none"
+                      className="bg-white text-zinc-800 border border-zinc-200 rounded px-2 py-1 text-xs outline-none"
                     >
                       <option value="none">None</option>
                       <option value="bottom">Bottom Gradient</option>
@@ -483,153 +489,126 @@ export default function Home() {
                   </div>
                   {overlayType !== 'none' && (
                     <div className="space-y-1.5">
-                      <div className="flex justify-between text-xs text-white/60">
+                      <div className="flex justify-between text-xs text-zinc-500">
                         <span>Overlay strength</span>
                         <span>{Math.round(overlayOpacity * 100)}%</span>
                       </div>
                       <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.05"
+                        type="range" min="0" max="1" step="0.05"
                         value={overlayOpacity}
                         onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))}
-                        className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                        className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
                       />
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Typography */}
-              <div className="bg-white/5 rounded-2xl p-4 border border-white/10 space-y-4">
-                <h3 className="text-sm font-semibold text-white/70 uppercase tracking-wider">Typography & Layout</h3>
+              <div className="bg-white rounded-md p-4 border border-zinc-200 space-y-4">
+                <h3 className="text-sm font-semibold text-emerald-900 uppercase tracking-wide">Typography & Layout</h3>
 
-                {/* Text Color */}
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-white/60">Text color</span>
+                  <span className="text-sm text-zinc-600">Text color</span>
                   <input
-                    type="color"
-                    value={textColor}
+                    type="color" value={textColor}
                     onChange={(e) => setTextColor(e.target.value)}
-                    className="w-8 h-8 rounded cursor-pointer border border-white/20 bg-transparent"
+                    className="w-8 h-8 rounded cursor-pointer border border-zinc-200 bg-transparent"
                   />
                 </div>
 
-                {/* Arabic Font */}
-                <div className="space-y-1.5 pt-2 border-t border-white/5">
-                  <label className="text-xs text-white/60 block">Arabic Font</label>
+                <div className="space-y-1.5 pt-2 border-t border-zinc-100">
+                  <label className="text-xs text-zinc-500 block">Arabic Font</label>
                   <select
                     value={arabicFont}
                     onChange={(e) => setArabicFont(e.target.value)}
-                    className="w-full bg-zinc-800 text-white border border-white/10 rounded p-1.5 text-xs outline-none"
+                    className="w-full bg-white text-zinc-800 border border-zinc-200 rounded p-1.5 text-xs outline-none"
                     style={{ fontFamily: arabicFont }}
                   >
                     {ARABIC_FONTS.map((f) => (
-                      <option key={f} value={f} style={{ fontFamily: f }}>
-                        {f}
-                      </option>
+                      <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
                     ))}
                   </select>
                 </div>
 
-                {/* English Font */}
-                <div className="space-y-1.5 pt-2 border-t border-white/5">
-                  <label className="text-xs text-white/60 block">English Font</label>
+                <div className="space-y-1.5 pt-2 border-t border-zinc-100">
+                  <label className="text-xs text-zinc-500 block">English Font</label>
                   <select
                     value={englishFont}
                     onChange={(e) => setEnglishFont(e.target.value)}
-                    className="w-full bg-zinc-800 text-white border border-white/10 rounded p-1.5 text-xs outline-none"
+                    className="w-full bg-white text-zinc-800 border border-zinc-200 rounded p-1.5 text-xs outline-none"
                     style={{ fontFamily: englishFont }}
                   >
                     {ENGLISH_FONTS.map((f) => (
-                      <option key={f} value={f} style={{ fontFamily: f }}>
-                        {f}
-                      </option>
+                      <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
                     ))}
                   </select>
                 </div>
 
-                {/* Font Sizes */}
-                <div className="space-y-3 pt-2 border-t border-white/5">
+                <div className="space-y-3 pt-2 border-t border-zinc-100">
                   <div className="space-y-1.5">
-                    <div className="flex justify-between text-xs text-white/60">
+                    <div className="flex justify-between text-xs text-zinc-500">
                       <span>Arabic font size</span>
                       <span>{arabicFontSize}px</span>
                     </div>
                     <input
-                      type="range"
-                      min="16"
-                      max="80"
-                      step="1"
+                      type="range" min="16" max="80" step="1"
                       value={arabicFontSize}
                       onChange={(e) => setArabicFontSize(parseInt(e.target.value))}
-                      className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <div className="flex justify-between text-xs text-white/60">
+                    <div className="flex justify-between text-xs text-zinc-500">
                       <span>English font size</span>
                       <span>{englishFontSize}px</span>
                     </div>
                     <input
-                      type="range"
-                      min="12"
-                      max="60"
-                      step="1"
+                      type="range" min="12" max="60" step="1"
                       value={englishFontSize}
                       onChange={(e) => setEnglishFontSize(parseInt(e.target.value))}
-                      className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
                     />
                   </div>
                 </div>
 
-                {/* Toggles */}
-                <div className="space-y-3 pt-2 border-t border-white/5">
+                <div className="space-y-3 pt-2 border-t border-zinc-100">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-white/60">Show translation</span>
+                    <span className="text-sm text-zinc-600">Show translation</span>
                     <button
                       onClick={() => setShowTranslation(!showTranslation)}
-                      className={`w-10 h-6 rounded-full transition-colors relative ${showTranslation ? 'bg-emerald-500' : 'bg-white/20'
-                        }`}
+                      className={`w-10 h-6 rounded-full transition-colors relative ${showTranslation ? 'bg-emerald-700' : 'bg-zinc-200'}`}
                     >
-                      <div
-                        className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${showTranslation ? 'left-5' : 'left-1'
-                          }`}
-                      />
+                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${showTranslation ? 'left-5' : 'left-1'}`} />
                     </button>
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
-                      <span className="text-sm text-white/60">Word highlight</span>
-                      <p className="text-xs text-white/30 mt-0.5">Highlight each word as recited</p>
+                      <span className="text-sm text-zinc-600">Word highlight</span>
+                      <p className="text-xs text-zinc-400 mt-0.5">Highlight each word as recited</p>
                     </div>
                     <button
                       onClick={() => setWordHighlight(!wordHighlight)}
-                      className={`w-10 h-6 rounded-full transition-colors relative flex-shrink-0 ${wordHighlight ? 'bg-emerald-500' : 'bg-white/20'
-                        }`}
+                      className={`w-10 h-6 rounded-full transition-colors relative flex-shrink-0 ${wordHighlight ? 'bg-emerald-700' : 'bg-zinc-200'}`}
                     >
-                      <div
-                        className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${wordHighlight ? 'left-5' : 'left-1'
-                          }`}
-                      />
+                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${wordHighlight ? 'left-5' : 'left-1'}`} />
                     </button>
                   </div>
                 </div>
 
-                {/* Position & Alignment */}
-                <div className="space-y-3 pt-2 border-t border-white/5">
+                <div className="space-y-3 pt-2 border-t border-zinc-100">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-white/60">Vertical Position</span>
+                    <span className="text-sm text-zinc-600">Vertical Position (default)</span>
                     <div className="flex gap-1">
                       {(['bottom', 'center'] as const).map((p) => (
                         <button
                           key={p}
-                          onClick={() => setVerticalPosition(p)}
-                          className={`px-3 py-1 rounded-lg text-xs transition-colors capitalize ${verticalPosition === p
-                            ? 'bg-emerald-500 text-white'
-                            : 'bg-white/10 text-white/50 hover:bg-white/20'
-                            }`}
+                          onClick={() => {
+                            setVerticalPosition(p);
+                            // reset manual drag positions so the new default takes effect
+                            setArabicPosition(null);
+                            setEnglishPosition(null);
+                          }}
+                          className={`px-3 py-1 rounded text-xs transition-colors capitalize ${verticalPosition === p ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
                         >
                           {p}
                         </button>
@@ -637,17 +616,26 @@ export default function Home() {
                     </div>
                   </div>
 
+                  {(arabicPosition || englishPosition) && (
+                    <button
+                      onClick={() => {
+                        setArabicPosition(null);
+                        setEnglishPosition(null);
+                      }}
+                      className="text-xs text-emerald-700 hover:underline"
+                    >
+                      Reset text position to default
+                    </button>
+                  )}
+
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-white/60">Arabic Align</span>
+                    <span className="text-xs text-zinc-500">Arabic Align</span>
                     <div className="flex gap-1">
                       {(['right', 'center'] as const).map((a) => (
                         <button
                           key={a}
                           onClick={() => setArabicAlign(a)}
-                          className={`px-2 py-1 rounded text-xs transition-colors capitalize ${arabicAlign === a
-                            ? 'bg-emerald-500 text-white'
-                            : 'bg-white/10 text-white/50 hover:bg-white/20'
-                            }`}
+                          className={`px-2 py-1 rounded text-xs transition-colors capitalize ${arabicAlign === a ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
                         >
                           {a}
                         </button>
@@ -656,16 +644,13 @@ export default function Home() {
                   </div>
 
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-white/60">English Align</span>
+                    <span className="text-xs text-zinc-500">English Align</span>
                     <div className="flex gap-1">
                       {(['left', 'center'] as const).map((a) => (
                         <button
                           key={a}
                           onClick={() => setEnglishAlign(a)}
-                          className={`px-2 py-1 rounded text-xs transition-colors capitalize ${englishAlign === a
-                            ? 'bg-emerald-500 text-white'
-                            : 'bg-white/10 text-white/50 hover:bg-white/20'
-                            }`}
+                          className={`px-2 py-1 rounded text-xs transition-colors capitalize ${englishAlign === a ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
                         >
                           {a}
                         </button>
@@ -675,9 +660,8 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Ayah Timeline */}
-              <div className="bg-white/5 rounded-2xl p-4 border border-white/10">
-                <h3 className="text-sm font-semibold mb-3 text-white/70 uppercase tracking-wider">
+              <div className="bg-white rounded-md p-4 border border-zinc-200">
+                <h3 className="text-sm font-semibold mb-3 text-emerald-900 uppercase tracking-wide">
                   Detected Ayahs ({ayahs.length})
                 </h3>
                 <AyahTimeline
@@ -689,12 +673,11 @@ export default function Home() {
                 />
               </div>
 
-              {/* Export Button */}
               <button
                 onClick={() => setStep('export')}
-                className="w-full py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white font-semibold rounded-xl transition-colors text-lg shadow-lg"
+                className="w-full py-3 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold rounded-md transition-colors"
               >
-                Export Video →
+                Export Video
               </button>
             </div>
           </div>
@@ -725,61 +708,7 @@ export default function Home() {
         )}
       </div>
 
-      {/* Footer */}
-      <footer className="border-t border-white/10 bg-white/5 backdrop-blur-sm mt-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
-            {/* Brand */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center text-sm font-bold">
-                  آ
-                </div>
-                <span className="font-semibold text-lg">AyahClip</span>
-              </div>
-              <p className="text-sm text-white/50">Transform Quran recitation into stunning video clips with AI-powered editing.</p>
-            </div>
-
-            {/* Features */}
-            <div className="space-y-4">
-              <h4 className="font-semibold text-white/70 uppercase text-sm tracking-wider">Features</h4>
-              <ul className="space-y-2 text-sm text-white/50">
-                <li className="hover:text-white/70 transition-colors">Upload & Edit</li>
-                <li className="opacity-50 cursor-not-allowed">Create Video</li>
-                <li className="opacity-50 cursor-not-allowed">Record Recitation</li>
-              </ul>
-            </div>
-
-            {/* Resources */}
-            <div className="space-y-4">
-              <h4 className="font-semibold text-white/70 uppercase text-sm tracking-wider">Resources</h4>
-              <ul className="space-y-2 text-sm text-white/50">
-                <li className="hover:text-white/70 transition-colors cursor-pointer">Documentation</li>
-                <li className="hover:text-white/70 transition-colors cursor-pointer">FAQ</li>
-                <li className="hover:text-white/70 transition-colors cursor-pointer">Support</li>
-              </ul>
-            </div>
-
-            {/* Contact */}
-            <div className="space-y-4">
-              <h4 className="font-semibold text-white/70 uppercase text-sm tracking-wider">Connect</h4>
-              <ul className="space-y-2 text-sm text-white/50">
-                <li className="hover:text-white/70 transition-colors cursor-pointer">Twitter</li>
-                <li className="hover:text-white/70 transition-colors cursor-pointer">GitHub</li>
-                <li className="hover:text-white/70 transition-colors cursor-pointer">Contact</li>
-              </ul>
-            </div>
-          </div>
-
-          {/* Divider */}
-          <div className="border-t border-white/10 pt-8">
-            <div className="flex flex-col sm:flex-row items-center justify-between text-sm text-white/40">
-              <p>© 2024 AyahClip. All rights reserved.</p>
-              <p className="mt-4 sm:mt-0">Made with ❤️ by <span className="text-emerald-400 font-semibold">Hassan Rehan</span></p>
-            </div>
-          </div>
-        </div>
-      </footer>
+      {showLanding && <LandingFooter />}
     </main>
   );
 }

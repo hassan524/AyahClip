@@ -8,12 +8,12 @@ interface Props {
   onChange: (bg: BackgroundConfig) => void;
 }
 
-const PRESET_COLORS = ['#0a0a1a', '#0d1f0d', '#1a0a0a', '#0a0d1a', '#1a1a0a', '#000000'];
+const PRESET_COLORS = ['#ffffff', '#f8faf7', '#d1e7dd', '#198754', '#0f5132', '#171717'];
 const PRESET_GRADIENTS: { from: string; to: string; label: string }[] = [
-  { from: '#0a0a1a', to: '#0d3320', label: 'Midnight' },
-  { from: '#0d0d0d', to: '#1a0a2e', label: 'Deep' },
-  { from: '#071a0d', to: '#0a1a2e', label: 'Forest' },
-  { from: '#1a0a0d', to: '#0a0a2e', label: 'Dusk' },
+  { from: '#ffffff', to: '#d1e7dd', label: 'Mint Glow' },
+  { from: '#f8faf7', to: '#e2ebd5', label: 'Soft Sage' },
+  { from: '#d1e7dd', to: '#a3cfbb', label: 'Classic Mint' },
+  { from: '#0f5132', to: '#1b3a2b', label: 'Deep Forest' },
 ];
 
 export default function BackgroundPicker({ value, onChange }: Props) {
@@ -37,18 +37,18 @@ export default function BackgroundPicker({ value, onChange }: Props) {
   return (
     <div className="space-y-4">
       {/* Type tabs */}
-      <div className="flex gap-1 bg-white/5 p-1 rounded-lg">
+      <div className="flex gap-1 bg-zinc-100 p-1 rounded-xl border border-zinc-200/40">
         {(['color', 'gradient', 'image', 'video'] as const).map((type) => (
           <button
             key={type}
             onClick={() => {
               if (type === 'image') { imageInputRef.current?.click(); return; }
               if (type === 'video') { videoInputRef.current?.click(); return; }
-              if (type === 'color') onChange({ type: 'color', value: '#0a0a1a' });
-              if (type === 'gradient') onChange({ type: 'gradient', from: '#0a0a1a', to: '#0d3320' });
+              if (type === 'color') onChange({ type: 'color', value: '#ffffff' });
+              if (type === 'gradient') onChange({ type: 'gradient', from: '#ffffff', to: '#d1e7dd' });
             }}
-            className={`flex-1 py-1.5 text-xs rounded-md transition-colors capitalize
-              ${value.type === type ? 'bg-white/15 text-white' : 'text-white/40 hover:text-white/70'}`}
+            className={`flex-1 py-1.5 text-xs rounded-lg transition-all capitalize cursor-pointer font-medium
+              ${value.type === type ? 'bg-white text-emerald-950 shadow-sm border border-emerald-100/30' : 'text-zinc-500 hover:text-emerald-700'}`}
           >
             {type}
           </button>
@@ -61,12 +61,12 @@ export default function BackgroundPicker({ value, onChange }: Props) {
       {/* Color presets */}
       {value.type === 'color' && (
         <div className="space-y-3">
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
             {PRESET_COLORS.map((c) => (
               <button
                 key={c}
                 onClick={() => onChange({ type: 'color', value: c })}
-                className={`w-8 h-8 rounded-lg border-2 transition-all ${value.value === c ? 'border-emerald-400 scale-110' : 'border-transparent'}`}
+                className={`w-8 h-8 rounded-lg border-2 transition-all cursor-pointer ${value.value === c ? 'border-emerald-500 scale-110 shadow-sm shadow-emerald-500/20' : 'border-zinc-200'}`}
                 style={{ backgroundColor: c }}
               />
             ))}
@@ -75,7 +75,7 @@ export default function BackgroundPicker({ value, onChange }: Props) {
                 type="color"
                 value={value.value}
                 onChange={(e) => onChange({ type: 'color', value: e.target.value })}
-                className="w-8 h-8 rounded-lg cursor-pointer border border-white/20 bg-transparent"
+                className="w-8 h-8 rounded-lg cursor-pointer border border-zinc-200 bg-transparent"
                 title="Custom color"
               />
               <input
@@ -83,15 +83,14 @@ export default function BackgroundPicker({ value, onChange }: Props) {
                 value={value.value}
                 onChange={(e) => {
                   const val = e.target.value;
-                  // Allow typing, validate that it has a # and is up to 7 characters
                   if (val.startsWith('#') && val.length <= 7) {
                     onChange({ type: 'color', value: val });
                   } else if (!val.startsWith('#') && val.length <= 6) {
                     onChange({ type: 'color', value: '#' + val });
                   }
                 }}
-                placeholder="#000000"
-                className="bg-zinc-800 text-white border border-white/10 rounded px-2 py-1 text-xs w-20 outline-none focus:border-emerald-500 transition-colors"
+                placeholder="#ffffff"
+                className="bg-white text-zinc-900 border border-zinc-200 rounded-lg px-2.5 py-1 text-xs w-24 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-inner font-mono"
               />
             </div>
           </div>
@@ -106,19 +105,23 @@ export default function BackgroundPicker({ value, onChange }: Props) {
               <button
                 key={g.label}
                 onClick={() => onChange({ type: 'gradient', from: g.from, to: g.to })}
-                className={`h-12 rounded-lg border-2 transition-all text-xs text-white/60
-                  ${value.type === 'gradient' && value.from === g.from ? 'border-emerald-400' : 'border-transparent'}`}
+                className={`h-12 rounded-lg border-2 transition-all text-xs text-zinc-800 font-semibold cursor-pointer shadow-sm
+                  ${value.type === 'gradient' && value.from === g.from ? 'border-emerald-500' : 'border-zinc-200'}`}
                 style={{ background: `linear-gradient(135deg, ${g.from}, ${g.to})` }}
               >
                 {g.label}
               </button>
             ))}
           </div>
-          <div className="flex gap-2 items-center">
-            <span className="text-xs text-white/40">From</span>
-            <input type="color" value={value.from} onChange={(e) => onChange({ ...value, from: e.target.value })} className="w-8 h-8 rounded cursor-pointer" />
-            <span className="text-xs text-white/40">To</span>
-            <input type="color" value={value.to} onChange={(e) => onChange({ ...value, to: e.target.value })} className="w-8 h-8 rounded cursor-pointer" />
+          <div className="flex gap-4 items-center pt-2 border-t border-zinc-100">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-semibold text-zinc-500">From</span>
+              <input type="color" value={value.from} onChange={(e) => onChange({ ...value, from: e.target.value })} className="w-8 h-8 rounded cursor-pointer border border-zinc-200" />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-semibold text-zinc-500">To</span>
+              <input type="color" value={value.to} onChange={(e) => onChange({ ...value, to: e.target.value })} className="w-8 h-8 rounded cursor-pointer border border-zinc-200" />
+            </div>
           </div>
         </div>
       )}
@@ -126,19 +129,19 @@ export default function BackgroundPicker({ value, onChange }: Props) {
       {/* Image/Video preview */}
       {(value.type === 'image' || value.type === 'video') && (
         <div className="space-y-2">
-          <div className="h-20 rounded-lg overflow-hidden bg-white/5 flex items-center justify-center">
+          <div className="h-20 rounded-lg overflow-hidden bg-zinc-50 border border-zinc-200 flex items-center justify-center shadow-inner">
             {value.type === 'image' ? (
-              <img src={value.url} className="h-full w-full object-cover opacity-70" alt="bg" />
+              <img src={value.url} className="h-full w-full object-cover opacity-80" alt="bg" />
             ) : (
-              <video src={value.url} className="h-full w-full object-cover opacity-70" muted />
+              <video src={value.url} className="h-full w-full object-cover opacity-80" muted />
             )}
           </div>
-          <p className="text-xs text-white/40 text-center">
+          <p className="text-xs text-zinc-400 text-center font-medium">
             {value.type === 'video' ? '🔇 Video will be muted + blurred in export' : '🖼️ Image background'}
           </p>
           <button
             onClick={() => value.type === 'image' ? imageInputRef.current?.click() : videoInputRef.current?.click()}
-            className="w-full py-1.5 text-xs bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-white/60"
+            className="w-full py-2 text-xs bg-zinc-100 hover:bg-zinc-200 rounded-lg transition-colors text-zinc-700 font-semibold cursor-pointer"
           >
             Change {value.type}
           </button>
