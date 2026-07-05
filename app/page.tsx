@@ -116,6 +116,7 @@ function normalizeArabicWord(input: string): string {
 export default function Home() {
   const [step, setStep] = useState<Step>('upload');
   const [activeFeature, setActiveFeature] = useState<Feature>('upload');
+  const [isAudioOnly, setIsAudioOnly] = useState(false);
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string>('');
   const [videoDuration, setVideoDuration] = useState(0);
@@ -160,6 +161,7 @@ export default function Home() {
     setVideoDuration(duration);
     setError('');
     setStep('processing');
+    setIsAudioOnly(file.type.startsWith('audio/') || activeFeature === 'record');
 
     try {
       setProcessingStatus('Extracting audio track from video...');
@@ -337,6 +339,151 @@ export default function Home() {
     }
   }, []);
 
+  /**
+   * "Create from Verse" flow: uses our own /api/quran-surah and
+   * /api/quran-audio proxy routes (instead of calling alquran.cloud
+   * directly from the browser, which was hitting CORS/"Failed to fetch")
+   * to get ayah text, translation, and audio for the selected range,
+   * stitches the audio together with exact timestamps, and drops the
+   * user straight into the edit step — same as upload/record.
+   */
+  const handleCreateFromVerse = useCallback(
+    async (config: {
+      reciterId: string;
+      reciterName: string;
+      surahNumber: number;
+      surahName: string;
+      fromAyah: number;
+      toAyah: number;
+      backgroundColor: string;
+    }) => {
+      setError('');
+      setStep('processing');
+
+      try {
+        setProcessingStatus('Fetching ayah text and audio...');
+        const params = new URLSearchParams({
+          reciterName: config.reciterName,
+          surahNumber: String(config.surahNumber),
+          fromAyah: String(config.fromAyah),
+          toAyah: String(config.toAyah),
+        });
+
+        const surahRes = await fetch(`/api/quran-surah?${params.toString()}`);
+        const surahJson = await surahRes.json();
+        if (!surahRes.ok) {
+          throw new Error(surahJson?.error || 'Failed to fetch surah data.');
+        }
+
+        const selectedAyahs: {
+          ayahNumber: number;
+          arabic: string;
+          translation: string;
+          audioUrl: string | null;
+        }[] = surahJson.ayahs || [];
+
+        if (selectedAyahs.length === 0) {
+          throw new Error('No ayahs found in the selected range.');
+        }
+
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const decodedBuffers: AudioBuffer[] = [];
+
+        for (let i = 0; i < selectedAyahs.length; i++) {
+          setProcessingStatus(`Downloading recitation audio ${i + 1} of ${selectedAyahs.length}...`);
+          const ayah = selectedAyahs[i];
+
+          if (!ayah.audioUrl) {
+            throw new Error(`Missing audio for ayah ${ayah.ayahNumber}.`);
+          }
+
+          const proxiedUrl = `/api/quran-audio?url=${encodeURIComponent(ayah.audioUrl)}`;
+          const arrayBuffer = await fetch(proxiedUrl).then((r) => {
+            if (!r.ok) throw new Error(`Failed to download audio for ayah ${ayah.ayahNumber}.`);
+            return r.arrayBuffer();
+          });
+
+          decodedBuffers.push(await audioCtx.decodeAudioData(arrayBuffer));
+        }
+
+        setProcessingStatus('Stitching ayahs together...');
+        const gapSeconds = 0.35;
+        const sampleRate = decodedBuffers[0].sampleRate;
+        const gapSamples = Math.round(gapSeconds * sampleRate);
+        const totalSamples =
+          decodedBuffers.reduce((sum, b) => sum + b.length, 0) + gapSamples * (decodedBuffers.length - 1);
+
+        const combinedBuffer = audioCtx.createBuffer(1, totalSamples, sampleRate);
+        const combinedData = combinedBuffer.getChannelData(0);
+
+        const builtAyahs: MatchedAyah[] = [];
+        let cursor = 0;
+
+        for (let i = 0; i < decodedBuffers.length; i++) {
+          const buf = decodedBuffers[i];
+          combinedData.set(buf.getChannelData(0), cursor);
+
+          const startTime = cursor / sampleRate;
+          const endTime = (cursor + buf.length) / sampleRate;
+          const ayahMeta = selectedAyahs[i];
+
+          const wordsArr = (ayahMeta.arabic || '').split(/\s+/).filter(Boolean);
+          const wordsList: WordTimestamp[] = [];
+          if (wordsArr.length > 0) {
+            const dur = endTime - startTime;
+            const perWord = Math.max(0.1, dur / wordsArr.length);
+            for (let wIdx = 0; wIdx < wordsArr.length; wIdx++) {
+              wordsList.push({
+                word: wordsArr[wIdx],
+                start: Number((startTime + wIdx * perWord).toFixed(3)),
+                end: Number((startTime + (wIdx + 1) * perWord).toFixed(3)),
+              });
+            }
+          }
+
+          builtAyahs.push({
+            surah: config.surahNumber,
+            surahName: config.surahName,
+            surahEnglishName: config.surahName,
+            ayahNumber: ayahMeta.ayahNumber,
+            arabic: ayahMeta.arabic,
+            translation: ayahMeta.translation,
+            isFullAyah: true,
+            startTime,
+            endTime,
+            duration: endTime - startTime,
+            words: wordsList,
+          });
+
+          cursor += buf.length + gapSamples;
+        }
+
+        const totalDuration = totalSamples / sampleRate;
+
+        setProcessingStatus('Converting audio...');
+        const wavBlob = bufferToWav(combinedBuffer);
+        const audioFileOut = new File([wavBlob], 'ayahclip-verse.wav', { type: 'audio/wav' });
+        const audioUrlOut = URL.createObjectURL(wavBlob);
+
+        setIsAudioOnly(true);
+        setBackground({ type: 'color', value: config.backgroundColor });
+        setVideoFile(audioFileOut);
+        setVideoUrl(audioUrlOut);
+        setVideoDuration(totalDuration);
+        setAyahs(builtAyahs);
+        setStep('edit');
+      } catch (e: any) {
+        console.error('Create-from-verse error:', e);
+        setError(e.message || 'Failed to generate clip from verse selection.');
+        setStep('upload');
+        setActiveFeature('create');
+      } finally {
+        setProcessingStatus('');
+      }
+    },
+    []
+  );
+
   const reset = () => {
     setStep('upload');
     setAyahs([]);
@@ -347,6 +494,7 @@ export default function Home() {
     setSeekRequest(null);
     setArabicPosition(null);
     setEnglishPosition(null);
+    setIsAudioOnly(false);
   };
 
   const scrollToUploader = () => {
@@ -396,11 +544,10 @@ export default function Home() {
                   <div className="inline-flex bg-zinc-100 rounded-lg p-1 gap-1">
                     <button
                       onClick={() => setActiveFeature('upload')}
-                      className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 cursor-pointer ${
-                        activeFeature === 'upload'
-                          ? 'bg-white text-emerald-900 shadow-sm'
-                          : 'text-zinc-500 hover:text-zinc-700'
-                      }`}
+                      className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 cursor-pointer ${activeFeature === 'upload'
+                        ? 'bg-white text-emerald-900 shadow-sm'
+                        : 'text-zinc-500 hover:text-zinc-700'
+                        }`}
                     >
                       <span className="flex items-center gap-1.5">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -411,11 +558,10 @@ export default function Home() {
                     </button>
                     <button
                       onClick={() => setActiveFeature('record')}
-                      className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 cursor-pointer ${
-                        activeFeature === 'record'
-                          ? 'bg-white text-emerald-900 shadow-sm'
-                          : 'text-zinc-500 hover:text-zinc-700'
-                      }`}
+                      className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 cursor-pointer ${activeFeature === 'record'
+                        ? 'bg-white text-emerald-900 shadow-sm'
+                        : 'text-zinc-500 hover:text-zinc-700'
+                        }`}
                     >
                       <span className="flex items-center gap-1.5">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -426,11 +572,10 @@ export default function Home() {
                     </button>
                     <button
                       onClick={() => setActiveFeature('create')}
-                      className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 cursor-pointer ${
-                        activeFeature === 'create'
-                          ? 'bg-white text-emerald-900 shadow-sm'
-                          : 'text-zinc-500 hover:text-zinc-700'
-                      }`}
+                      className={`px-4 py-2 rounded-md text-sm font-medium transition-all duration-200 cursor-pointer ${activeFeature === 'create'
+                        ? 'bg-white text-emerald-900 shadow-sm'
+                        : 'text-zinc-500 hover:text-zinc-700'
+                        }`}
                     >
                       <span className="flex items-center gap-1.5">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -471,13 +616,7 @@ export default function Home() {
                 {/* Create from Verse Tab Content */}
                 {activeFeature === 'create' && (
                   <div className="max-w-2xl mx-auto">
-                    <CreateFromVerse
-                      onGenerate={(config) => {
-                        console.log('Generate clip with config:', config);
-                        // TODO: Fetch audio from reciter API and process
-                        alert(`Feature coming soon!\n\nReciter: ${config.reciterName}\nSurah: ${config.surahName} (${config.surahNumber})\nAyahs: ${config.fromAyah}-${config.toAyah}`);
-                      }}
-                    />
+                    <CreateFromVerse onGenerate={handleCreateFromVerse} />
                   </div>
                 )}
               </>
@@ -509,6 +648,7 @@ export default function Home() {
             <div className="flex flex-col gap-2 lg:w-[55%] lg:sticky lg:top-24 lg:self-start">
               <VideoPreview
                 videoUrl={videoUrl}
+                isAudioOnly={isAudioOnly}
                 ayahs={ayahs}
                 background={background}
                 textColor={textColor}
@@ -784,6 +924,7 @@ export default function Home() {
           <ExportPanel
             videoFile={videoFile}
             videoUrl={videoUrl}
+            isAudioOnly={isAudioOnly}
             ayahs={ayahs}
             background={background}
             textColor={textColor}
@@ -810,9 +951,21 @@ export default function Home() {
         isOpen={isContactOpen}
         onClose={() => setIsContactOpen(false)}
         title="Contact Us"
-        text={`Thank you for using AyahClip! If you have any questions, feedback, or need assistance, feel free to reach out directly.
-
-Email: hassanrehan9975@gmail.com`}
+        text={
+          <>
+            Thank you for using AyahClip! If you have any questions, feedback, or
+            found any issue with the app, please reach out directly.
+            <br />
+            <br />
+            Email:{' '}
+            <a
+              href="mailto:hassanrehan9975@gmail.com"
+              className="text-emerald-700 hover:underline"
+            >
+              hassanrehan9975@gmail.com
+            </a>
+          </>
+        }
       />
     </main>
   );

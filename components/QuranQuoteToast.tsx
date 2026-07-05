@@ -194,7 +194,7 @@ export default function QuranQuoteToast({ enabled }: Props) {
           <div className="flex-1 flex items-center gap-3 min-w-0">
             {/* Left Column: Translation & Citation */}
             <div className="flex-1 min-w-0">
-              <p className="text-zinc-600 text-[11px] sm:text-xs italic leading-snug line-clamp-2">
+            <p className="text-zinc-600 text-[11px] sm:text-xs italic leading-snug break-words">
                 "{quote.ayah.translation}"
               </p>
               <p className="text-emerald-700 text-[9px] sm:text-[10px] font-semibold mt-0.5 whitespace-nowrap">
@@ -207,7 +207,7 @@ export default function QuranQuoteToast({ enabled }: Props) {
             
             {/* Right Column: Arabic Script */}
             <div className="flex-1 text-right min-w-0" dir="rtl">
-              <p className="text-emerald-950 text-xs sm:text-sm font-medium leading-relaxed line-clamp-2">
+            <p className="text-emerald-950 text-xs sm:text-sm font-medium leading-relaxed break-words">
                 {quote.ayah.text}
               </p>
             </div>
@@ -227,4 +227,4 @@ export default function QuranQuoteToast({ enabled }: Props) {
       ))}
     </>
   );
-}
+}

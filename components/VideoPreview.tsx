@@ -20,6 +20,7 @@ export type SurahLabelLang = 'arabic' | 'english' | 'both';
 
 interface Props {
   videoUrl: string;
+  isAudioOnly?: boolean;
   ayahs: MatchedAyah[];
   background: BackgroundConfig;
   textColor: string;
@@ -84,7 +85,7 @@ const ASPECT_CONTAINER_CLASS: Record<AspectRatio, string> = {
 const SNAP_THRESHOLD = 3;
 
 export default function VideoPreview({
-  videoUrl, ayahs, background, textColor, showTranslation, duration,
+  videoUrl, isAudioOnly = false, ayahs, background, textColor, showTranslation, duration,
   videoOpacity, overlayType, overlayOpacity, arabicFont, englishFont,
   arabicAlign, englishAlign, verticalPosition, arabicFontSize, englishFontSize,
   wordHighlight = false, onTimeUpdate, seekTo,
@@ -578,9 +579,9 @@ export default function VideoPreview({
           </div>
 
           {/* ---------- Main recitation video ----------
-              If background type is 'video', the recitation clip is hidden (audio-only,
-              since visually we're showing the looping background video instead). */}
-          {background.type === 'video'
+              If background type is 'video' or it's audio-only, the recitation clip is hidden visually,
+              so the user's selected background color/gradient/image/video loop is visible underneath. */}
+          {background.type === 'video' || isAudioOnly
             ? <video ref={videoRef} src={videoUrl} className="hidden" playsInline />
             : <video ref={videoRef} src={videoUrl}
               className="absolute inset-0 w-full h-full object-cover"

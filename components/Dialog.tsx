@@ -6,7 +6,7 @@ interface DialogProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
-  text: string;
+  text: React.ReactNode;
 }
 
 export default function Dialog({ isOpen, onClose, title, text }: DialogProps) {
@@ -25,12 +25,12 @@ export default function Dialog({ isOpen, onClose, title, text }: DialogProps) {
   if (!isOpen) return null;
 
   return (
-    <div 
+    <div
       className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/35"
       onClick={onClose}
     >
       {/* Dialog Box */}
-      <div 
+      <div
         className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-emerald-50 z-10"
         onClick={(e) => e.stopPropagation()}
       >
@@ -38,8 +38,8 @@ export default function Dialog({ isOpen, onClose, title, text }: DialogProps) {
           <h3 className="text-lg font-bold text-emerald-950">
             {title}
           </h3>
-          <button 
-            onClick={onClose} 
+          <button
+            onClick={onClose}
             className="text-zinc-400 hover:text-zinc-600 transition-colors p-1 rounded-lg hover:bg-zinc-50 cursor-pointer"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -47,9 +47,9 @@ export default function Dialog({ isOpen, onClose, title, text }: DialogProps) {
             </svg>
           </button>
         </div>
-        <p className="text-zinc-600 text-sm leading-relaxed mb-6 whitespace-pre-line">
+        <div className="text-zinc-600 text-sm leading-relaxed mb-6 whitespace-pre-line">
           {text}
-        </p>
+        </div>
         <div className="flex justify-end">
           <button
             onClick={onClose}

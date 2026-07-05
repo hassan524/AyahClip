@@ -62,6 +62,7 @@ const HADITHS = [
 interface Props {
   videoFile: File;
   videoUrl: string;
+  isAudioOnly?: boolean;
   ayahs: MatchedAyah[];
   background: BackgroundConfig;
   textColor: string;
@@ -81,7 +82,7 @@ interface Props {
 }
 
 export default function ExportPanel({
-  videoFile, videoUrl, ayahs, background, textColor, showTranslation,
+  videoFile, videoUrl, isAudioOnly = false, ayahs, background, textColor, showTranslation,
   videoOpacity, overlayType, overlayOpacity, arabicFont, englishFont,
   arabicAlign, englishAlign, verticalPosition, arabicFontSize, englishFontSize,
   wordHighlight = false, onBack,
@@ -244,7 +245,7 @@ export default function ExportPanel({
       ctx.fillRect(0, 0, W, H);
     }
 
-    if (videoRef.current && background.type !== 'video') {
+    if (videoRef.current && background.type !== 'video' && !isAudioOnly) {
       ctx.globalAlpha = videoOpacity;
       ctx.drawImage(videoRef.current, 0, 0, W, H);
       ctx.globalAlpha = 1.0;
