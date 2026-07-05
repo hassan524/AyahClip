@@ -1,62 +1,67 @@
 import Groq from 'groq-sdk';
 
+// Structure for the incoming words from the transcription engine
 export type InputWord = {
-  word: string;
-  start: number;
-  end: number;
+  word: string;  // The spoken word
+  start: number; // Exact start timestamp in seconds
+  end: number;   // Exact end timestamp in seconds
 };
 
+// Initialize the Groq SDK client
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-import { getAyahWithTranslation, normalizeArabic, searchQuranByText } from './quran';
-
+/**
+ * Matches transcribed words and segments to exact Quranic Ayahs with hyper-accurate timing.
+ */
 export async function matchAyahsWithAI(words: InputWord[], segments: any[] = []) {
+  
+  // 1. CONSTRUCT THE PROMPT
+  // We tell the AI to look directly at the individual word timestamps 
+  // to calculate the absolute true start and end times for split verses.
   const prompt = `
-You are an expert Quranic scholar processing a flawed phonetic transcription that has been broken down into specific SEGMENTS.
+You are a Quranic scholar. You are given an array of transcription SEGMENTS, and an array of individual WORDS with timestamps.
 
-Your task:
-1. You are provided with an array of transcription SEGMENTS.
-2. For EACH segment, determine which Surah and Ayah(s) it belongs to.
-3. Correct the phonetic text of that segment to exact Uthmani script with full Tashkeel (diacritics).
-4. Provide the English translation for ONLY that specific segment's text.
+Your core task:
+1. Recognize the correct Surah and Ayah number.
+2. Output EXACT Uthmani script with full diacritics (Tashkeel).
+3. Provide the English translation.
 
-CRITICAL INSTRUCTION: YOU MUST MAINTAIN A STRICT 1-TO-1 MAPPING WITH THE INPUT SEGMENTS.
-The user has provided exactly ${segments.length} segments. You MUST output exactly ${segments.length} objects in your \`ayahs\` array.
-DO NOT combine segments, even if they belong to the same Ayah. 
-If segment 1 is the first half of Ayah 2:285, and segment 2 is the second half, keep them as TWO separate objects.
-DO NOT hallucinate the rest of a verse. ONLY translate and output the Arabic for the words actually recited in that segment.
+CRITICAL TIMING & SPLITTING RULE:
+- Each object in the "ayahs" array MUST contain exactly ONE Ayah (Do not group multiple Ayahs together).
+- If a segment spans across more than one Ayah, you MUST split them into separate objects.
+- To find the PERFECT "startTime" and "endTime" for each Ayah object, map it directly to the "words" array. Take the 'start' time of the very first word belonging to this Ayah, and the 'end' time of the very last word belonging to this Ayah. Do not estimate or guess; use the precise word timestamps provided.
+- Please start time and end time should work properly
+- also some ayahs are big if find verse in object but its verse not complete ayah show it as it is for exmaple this    آمن الرسول بما أنزل إليه من ربه والمؤمنون you should know which to show correct cause long will be alot in screen
+- every verse should have arabic signs like this ءَامَنَ ٱلرَّسُولُ بِمَآ أُنزِلَ إِلَيْهِ مِن رَّبِّهِۦ وَٱلْمُؤْمِنُونَ  not plan arabic and in the end of ayah correct ayah number in circle beautyfull only show that circle if the ayah end and which ayah it was for example إِذَا زُلْزِلَتِ ٱلْأَرْضُ زِلْزَالَهَا ١ وَأَخْرَجَتِ ٱلْأَرْضُ أَثْقَالَهَا ٢ وَقَالَ ٱلْإِنسَـٰنُ مَا لَهَا ٣ like that each ayah u should know this ayah just show that after okay? and very correct start time and end time do caluclates with words second also if ayah was long and u seperate them then dont show same ayah number in the end for exaple after this  آمن الرسول بما أنزل إليه من ربه والمؤمنون just show when ayah end and correct and please make sure start time and edn teime working perfectly 
+- translation should not be extra if the verse ending with for example وَمَا قَدَرُوا يَقِينًا the transltion should be for exact those words not full ayah "And they did not kill him for sure", and make sure you double check translation and arabic its the matter of quran 
+- also please make sure when ayah is ending add thi ayah number in end وَقَالُوا۟ ٱتَّخَذَ ٱلرَّحْمَـٰنُ وَلَدًۭا ٨٨ like that please for every quran ayah u getting first u seperaitng ayah then also put in thi end anyah number no big deal and start and end time perfectly not even second difference do full math and algorithm it should be perfect
 
-CRITICAL SURAH NAMING RULE:
-For the English Surah names, use the transliterated Arabic names rather than literal English translations. 
-For example, for Surah 4, write "An-Nisa" or "Surah An-Nisa". DO NOT write "The Women".
-
-IMPORTANT QURANIC RULE (Muqatta'at):
-Transcription engines often spell out disjointed letters phonetically (e.g., "كافها يا عين صاد" -> Kaaf Ha Ya 'Ayn Saad, "الف لام ميم" -> Alif Laam Meem).
-You MUST recognize these phonetic spellings as Quranic Muqatta'at and correct them to their proper Uthmani script (e.g., "كهيعص", "الم"). Do not output the phonetic spelling.
-
-Output your response as a JSON object with the following structure:
+Output format MUST be a valid JSON object with this exact structure:
 {
-  "reasoning": "Explain your step-by-step matching for each segment, ensuring you don't combine them.",
   "ayahs": [
     {
-      "surah": integer (e.g. 2),
-      "ayahNumber": integer (e.g. 285),
-      "surahName": "Arabic name",
-      "surahEnglishName": "Transliterated English name (e.g. An-Nisa)",
-      "arabic": "The EXACT Uthmani text (with Tashkeel) for THIS SEGMENT ONLY.",
-      "translation": "The English translation for THIS SEGMENT ONLY.",
-      "isFullAyah": boolean (false if this segment only contains part of the ayah)
+      "surah": 99,
+      "ayahNumber": 1,
+      "surahName": "الزلزلة",
+      "surahEnglishName": "Al-Zalzalah",
+      "arabic": "إِذَا زُلْزِلَتِ الْأَرْضُ زِلْزَالَهَا",
+      "translation": "When the earth is shaken with its [final] earthquake",
+      "startTime": 6.86,
+      "endTime": 11.40,
+      "isFullAyah": true
     }
   ]
 }
 
-User Transcription Segments:
-${JSON.stringify(segments)}
+Input Data:
+Words (Use this for precise start/end times): ${JSON.stringify(words)}
+Segments: ${JSON.stringify(segments)}
 `;
 
   try {
+    // 2. CALL THE GROQ API
     const response = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       response_format: { type: 'json_object' },
@@ -70,180 +75,35 @@ ${JSON.stringify(segments)}
           content: prompt,
         },
       ],
-      temperature: 0.1, // Even lower temperature to prevent hallucination
-      max_tokens: 8000, // Explicitly increase max tokens to handle many segments
+      temperature: 0.1, // Low temperature to prevent hallucinations and enforce absolute precision
     });
 
+    // Extract raw string text from response
     const content = response.choices[0].message?.content;
     if (!content) {
       throw new Error('No response from AI model');
     }
 
+    // 3. PARSE RESULTS
     const parsed = JSON.parse(content);
-    let ayahs = parsed.ayahs || [];
+    const ayahs = parsed.ayahs || [];
     
-    // Ensure we don't process more output blocks than input segments
-    if (segments.length > 0) {
-      ayahs = ayahs.slice(0, segments.length);
-    }
-
-    // Definitive algorithmic fallback: 
-    // Bind each output block to its corresponding input segment and synthetically generate word timestamps
-    for (let i = 0; i < ayahs.length; i++) {
-      const ayah = ayahs[i];
-      const segment = segments[i]; // The corresponding input segment
-      
-      if (!segment) continue;
-
-      ayah.startTime = segment.start;
-      ayah.endTime = segment.end;
-      
-      // Fix Surah translation names if LLM outputs English words like "The Women"
-      if (ayah.surah === 4 && ayah.surahEnglishName && ayah.surahEnglishName.toLowerCase().includes('women')) {
-        ayah.surahEnglishName = "An-Nisa";
-      }
-
-      // ============================================================================
-      // PERFECT DIACRITICS GRAFTER
-      // Fetch actual full ayah from database to guarantee 100% accurate Uthmani script
-      // ============================================================================
-      
-      // Fallback: If AI forgot to return Surah/Ayah, find it via text search!
-      if ((!ayah.surah || !ayah.ayahNumber) && ayah.arabic) {
-        const matches = await searchQuranByText(ayah.arabic);
-        if (matches && matches.length > 0) {
-          ayah.surah = matches[0].surah;
-          ayah.ayahNumber = matches[0].numberInSurah;
-          ayah.surahName = matches[0].surahName;
-          ayah.surahEnglishName = matches[0].surahEnglishName;
-        }
-      }
-
-      if (ayah.surah && ayah.ayahNumber) {
-        const dbData = await getAyahWithTranslation(ayah.surah, ayah.ayahNumber);
-        if (dbData) {
-          // Double check Surah name fix after DB load
-          if (ayah.surah === 4) ayah.surahEnglishName = "An-Nisa";
-
-          // Check if it's effectively a full Ayah based on word count before applying partial logic
-          const dbWordCount = dbData.arabic.split(/\s+/).filter(Boolean).length;
-          const inputWordCount = (ayah.arabic || '').split(/\s+/).filter(Boolean).length;
-          
-          if (ayah.isFullAyah || Math.abs(dbWordCount - inputWordCount) <= 2) {
-            ayah.arabic = dbData.arabic;
-            ayah.translation = dbData.translation;
-            ayah.isFullAyah = true;
-          } else if (ayah.arabic) {
-            // Find the best matching substring in the full DB text using raw phonetic words
-            const dbRawWords = dbData.arabic.split(/\s+/).filter(Boolean);
-            const dbNormWords = dbRawWords.map((w: string) => normalizeArabic(w));
-            
-            // Extract the original phonetic words from the Whisper transcription that fall within this segment
-            const segWords = words.filter(w => w.start >= segment.start - 0.5 && w.end <= segment.end + 0.5);
-            const inputRawWords: string[] = segWords.length > 0 ? segWords.map(w => w.word) : (ayah.arabic || '').split(/\s+/).filter(Boolean);
-            const inputNormWords = inputRawWords.map((w: string) => normalizeArabic(w));
-            
-            let bestMatchIndex = 0;
-            let bestMatchScore = -1;
-            
-            // Sliding window to find where the segment's phonetics fit in the full Ayah
-            const maxJ = Math.max(0, dbNormWords.length - inputNormWords.length);
-            for (let j = 0; j <= maxJ; j++) {
-              let score = 0;
-              for (let k = 0; k < inputNormWords.length; k++) {
-                const dbW = dbNormWords[j + k];
-                const inW = inputNormWords[k];
-                if (!dbW || !inW) continue;
-                if (dbW === inW) {
-                  score += 1;
-                } else if (dbW.includes(inW) || inW.includes(dbW)) {
-                  score += 0.8;
-                } else if (dbW.substring(0, 3) === inW.substring(0, 3) && dbW.length >= 3) {
-                  score += 0.5;
-                }
-              }
-              if (score > bestMatchScore) {
-                bestMatchScore = score;
-                bestMatchIndex = j;
-              }
-            }
-            
-            // Extract the perfect Uthmani text using the bounds we just found
-            if (bestMatchScore > 0) {
-              const matchedLength = Math.min(dbRawWords.length - bestMatchIndex, inputNormWords.length);
-              ayah.arabic = dbRawWords.slice(bestMatchIndex, bestMatchIndex + matchedLength).join(' ');
-              
-              // CRITICAL TRANSLATION FIX FOR PARTIAL MATCHES:
-              // Extremely strict prompt + regex sanitization to prevent conversational wrapping
-              try {
-                const translationResp = await groq.chat.completions.create({
-                  model: 'llama-3.3-70b-versatile',
-                  messages: [
-                    { 
-                      role: 'system', 
-                      content: 'You are a precise literal translation tool. You MUST output ONLY the direct English translation text of the Arabic phrase provided. Do not include any introductory remarks, explanations, labels, quotes, or conversational filler. Output only raw translated text.' 
-                    },
-                    { 
-                      role: 'user', 
-                      content: `Translate this exact phrase from Surah ${ayah.surah}, Ayah ${ayah.ayahNumber}: "${ayah.arabic}"` 
-                    }
-                  ],
-                  temperature: 0,
-                });
-                
-                let partialTranslation = translationResp.choices[0].message?.content?.trim() || '';
-                if (partialTranslation) {
-                  // Clean up conversational wrapping if the LLM ignores the system instruction
-                  partialTranslation = partialTranslation.replace(/^(the translation of|translation|phrase|meaning of).*?is:\s*/i, '');
-                  partialTranslation = partialTranslation.replace(/^["']|["']$/g, '').trim();
-                  
-                  ayah.translation = partialTranslation;
-                }
-              } catch (e) {
-                console.error("Failed to generate precise partial translation, falling back to original", e);
-              }
-            }
-          }
-          
-          // Guaranteed failsafe: If it STILL lacks diacritics (e.g. API failed) and it's 39:61, force the text.
-          if (ayah.arabic && !ayah.arabic.match(/[\u064B-\u065F\u0670]/) && ayah.surah === 39 && ayah.ayahNumber === 61) {
-            ayah.arabic = 'وَيُنَجِّى ٱللَّهُ ٱلَّذِينَ ٱتَّقَوْا۟ بِمَفَازَتِهِمْ لَا يَمَسُّهُمُ ٱلسُّوٓءُ وَلَا هُمْ يَحْزَنُونَ';
-          }
-        }
-      }
-
-      // Forcefully remove any verse numbers (English/Arabic digits) or surrounding glyph brackets (e.g. ﴿﴾ or ١٥٧)
+    // 4. CLEAN ARABIC TEXT
+    // Automatically strip out decorative brackets or verse numbers that LLMs often hallucinate at the end of text strings.
+    for (const ayah of ayahs) {
       if (ayah.arabic) {
         ayah.arabic = ayah.arabic
+          // Regex kills standard digits, Arabic digits, and ornate end-of-verse brackets like ﴿﴾
           .replace(/[\u06DD\u06D4\u06E9\u06EA\u06EB\u06EC\u06ED\u06EE\u06EF\u06F0-\u06F90-9\u0660-\u0669﴿﴾]/g, '')
+          // Compresses any multiple spaces into one clean single space
           .replace(/\s+/g, ' ')
+          // Trims trailing or leading spaces
           .trim();
       }
-      
-      // Reconstruct the words array algorithmically from the perfectly diacriticized text
-      const correctedWords = (ayah.arabic || '').split(/\s+/).filter(Boolean);
-      ayah.words = [];
-      
-      if (correctedWords.length > 0) {
-        const duration = segment.end - segment.start;
-        const timePerWord = Math.max(0.1, duration / correctedWords.length);
-        
-        for (let wIdx = 0; wIdx < correctedWords.length; wIdx++) {
-          ayah.words.push({
-            word: correctedWords[wIdx],
-            start: Number((segment.start + (wIdx * timePerWord)).toFixed(3)),
-            end: Number((segment.start + ((wIdx + 1) * timePerWord)).toFixed(3))
-          });
-        }
-      }
-      
-      // If we clipped it heavily, it's definitely not a full ayah
-      if (ayah.isFullAyah && correctedWords.length < 4) {
-        ayah.isFullAyah = false;
-      }
     }
-    
-    // Filter out completely emptied ayahs
+
+    // 5. RETURN POLISHED DATA
+    // Return only valid elements that successfully generated Arabic text
     return ayahs.filter((a: any) => a.arabic && a.arabic.trim().length > 0);
   } catch (error) {
     console.error('Error in matchAyahsWithAI:', error);
