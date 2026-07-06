@@ -40,12 +40,12 @@ export default function Navbar({
 
   return (
     <header className="sticky top-0 z-50 border-b border-emerald-100 bg-white/90 backdrop-blur">
-      <div className="mx-auto flex h-18 max-w-7xl items-center justify-between px-4 sm:px-6">
+      <div className="mx-auto flex h-18 max-w-7xl items-center justify-between px-2 sm:px-6">
 
         {/* Logo */}
         <button
           onClick={onReset}
-          className="flex items-center cursor-pointer"
+          className="flex relative sm:right-0 right-4 items-center cursor-pointer"
         >
           <Image
             src="/logo.png"
@@ -133,4 +133,4 @@ export default function Navbar({
       )}
     </header>
   );
-}
+}

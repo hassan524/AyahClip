@@ -80,7 +80,7 @@ export default function HowItWorks() {
                   <span className="w-8 h-8 rounded-md bg-emerald-900 text-white flex items-center justify-center flex-shrink-0">
                     {opt.icon}
                   </span>
-                  <p className="font-semibold text-emerald-950 text-sm">{opt.title}</p>
+                  <p className="font-semibold text-emerald-950 text-xs sm:text-sm">{opt.title}</p>
                 </div>
                 <p className="text-zinc-500 text-sm leading-relaxed">{opt.description}</p>
               </div>
