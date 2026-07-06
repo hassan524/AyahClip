@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-// Only allow proxying from the known Quran audio CDN hosts, to avoid this
-// route being abused as an open proxy.
-const ALLOWED_HOSTS = ['cdn.islamic.network', 'cdn.alquran.cloud'];
+// Only allow proxying from known Quran audio CDN hosts, to avoid this
+// route being abused as an open proxy. everyayah.com is required here
+// because the extended reciter set in lib/reciters.ts (Yasser Al-Dosari,
+// Saad Al-Ghamdi, Nasser Al Qatami, etc.) serves audio from there.
+const ALLOWED_HOSTS = ['cdn.islamic.network', 'cdn.alquran.cloud', 'everyayah.com'];
 
 export async function GET(req: NextRequest) {
   try {

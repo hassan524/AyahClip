@@ -13,6 +13,11 @@ import CreateFromVerse from '@/components/CreateFromVerse';
 import BackgroundPicker from '@/components/BackgroundPicker';
 import AyahTimeline from '@/components/AyahTimeline';
 import VideoPreview, { TextPosition, AspectRatio } from '@/components/VideoPreview';
+import {
+  TextAnimation,
+  AyahSegmentStyle,
+  TEXT_ANIMATION_OPTIONS,
+} from '@/lib/ayah-styles';
 import ExportPanel from '@/components/ExportPanel';
 import Dialog from '@/components/Dialog';
 
@@ -46,6 +51,7 @@ export interface MatchedAyah {
   displayStart?: number;
   displayEnd?: number;
   words?: WordTimestamp[];
+  style?: AyahSegmentStyle;
 }
 
 export type Step = 'upload' | 'processing' | 'edit' | 'export';
@@ -140,6 +146,22 @@ export default function Home() {
   const [verticalPosition, setVerticalPosition] = useState<'center' | 'bottom'>('center');
   const [arabicFontSize, setArabicFontSize] = useState(27);
   const [englishFontSize, setEnglishFontSize] = useState(20);
+  const [textAnimation, setTextAnimation] = useState<TextAnimation>('fade');
+  const [arabicLineHeight, setArabicLineHeight] = useState(1.75);
+  const [englishLineHeight, setEnglishLineHeight] = useState(1.6);
+  const [arabicPadding, setArabicPadding] = useState(0);
+  const [englishPadding, setEnglishPadding] = useState(0);
+
+  const globalTextStyle = {
+    textAnimation,
+    arabicFontSize,
+    englishFontSize,
+    arabicLineHeight,
+    englishLineHeight,
+    arabicPadding,
+    englishPadding,
+    textColor,
+  };
 
   // ---- Draggable text positions (ONE global position each, applies to every ayah) ----
   const [arabicPosition, setArabicPosition] = useState<TextPosition | null>(null);
@@ -347,6 +369,147 @@ export default function Home() {
    * stitches the audio together with exact timestamps, and drops the
    * user straight into the edit step — same as upload/record.
    */
+  // function trimSilence(buffer: AudioBuffer, audioCtx: BaseAudioContext, threshold = 0.012): AudioBuffer {
+  //   const data = buffer.getChannelData(0);
+  //   let start = 0;
+  //   let end = data.length - 1;
+  //   while (start < end && Math.abs(data[start]) < threshold) start++;
+  //   while (end > start && Math.abs(data[end]) < threshold) end--;
+
+  //   const trimmedLength = end - start + 1;
+  //   if (trimmedLength <= 0) return buffer;
+
+  //   const trimmed = audioCtx.createBuffer(1, trimmedLength, buffer.sampleRate);
+  //   const trimmedData = trimmed.getChannelData(0);
+  //   for (let i = 0; i < trimmedLength; i++) trimmedData[i] = data[start + i];
+  //   return trimmed;
+  // }
+
+  function splitByWords(text: string): string[] {
+    return text.trim().split(/\s+/).filter(Boolean);
+  }
+
+  function estimateArabicLines(text: string): number {
+    const words = splitByWords(text);
+    const weightedLength = words.reduce((sum, word) => sum + word.length, 0);
+
+    return Math.ceil(weightedLength / 58);
+  }
+
+  function splitArabicIntoDisplayChunks(text: string, maxEstimatedLines = 2): string[] {
+    const clean = text.trim();
+    if (!clean) return [];
+
+    // Keep short/medium ayahs complete.
+    if (estimateArabicLines(clean) <= maxEstimatedLines) {
+      return [clean];
+    }
+
+    const words = splitByWords(clean);
+    const stopMarks = new Set(['ۚ', 'ۗ', 'ۖ', 'ۙ', 'ۘ', 'ۛ', 'ۜ', '۝', 'ؕ', '،', '؛']);
+
+    const chunks: string[] = [];
+    let current: string[] = [];
+
+    for (const word of words) {
+      current.push(word);
+
+      const currentText = current.join(' ');
+      const hasStopMark = [...word].some((char) => stopMarks.has(char));
+      const currentLines = estimateArabicLines(currentText);
+      const enoughWords = current.length >= 7;
+
+      if (currentLines >= maxEstimatedLines && hasStopMark && enoughWords) {
+        chunks.push(currentText);
+        current = [];
+        continue;
+      }
+
+      if (currentLines > maxEstimatedLines) {
+        if (current.length > 1) {
+          const lastWord = current.pop()!;
+          chunks.push(current.join(' '));
+          current = [lastWord];
+        } else {
+          chunks.push(currentText);
+          current = [];
+        }
+      }
+    }
+
+    if (current.length > 0) {
+      chunks.push(current.join(' '));
+    }
+
+    // Prevent tiny last chunks like only "يُبْصِرُونَ".
+    if (chunks.length > 1) {
+      const last = chunks[chunks.length - 1];
+      const lastWordCount = splitByWords(last).length;
+
+      if (lastWordCount <= 3) {
+        chunks[chunks.length - 2] = `${chunks[chunks.length - 2]} ${last}`.trim();
+        chunks.pop();
+      }
+    }
+
+    return chunks;
+  }
+
+  function splitTranslationByArabicRatio(translation: string, arabicChunks: string[], fullArabic: string): string[] {
+    const clean = translation.trim();
+    if (!clean) return [];
+
+    if (arabicChunks.length <= 1) {
+      return [clean];
+    }
+
+    const translationWords = splitByWords(clean);
+    const arabicWordCounts = arabicChunks.map((chunk) => splitByWords(chunk).length);
+    const totalArabicWords = Math.max(1, splitByWords(fullArabic).length);
+
+    const chunks: string[] = [];
+    let cursor = 0;
+
+    for (let i = 0; i < arabicChunks.length; i++) {
+      const isLast = i === arabicChunks.length - 1;
+
+      if (isLast) {
+        chunks.push(translationWords.slice(cursor).join(' '));
+        break;
+      }
+
+      const ratio = arabicWordCounts[i] / totalArabicWords;
+      let take = Math.round(ratio * translationWords.length);
+
+      take = Math.max(4, take);
+      take = Math.min(take, translationWords.length - cursor - 3);
+
+      let end = cursor + take;
+
+      for (let j = end; j < Math.min(translationWords.length - 1, end + 5); j++) {
+        if (/[,.!?;:]$/.test(translationWords[j])) {
+          end = j + 1;
+          break;
+        }
+      }
+
+      for (let j = end - 1; j > Math.max(cursor + 3, end - 5); j--) {
+        if (/[,.!?;:]$/.test(translationWords[j])) {
+          end = j + 1;
+          break;
+        }
+      }
+
+      chunks.push(translationWords.slice(cursor, end).join(' '));
+      cursor = end;
+    }
+
+    return chunks;
+  }
+
+
+
+
   const handleCreateFromVerse = useCallback(
     async (config: {
       reciterId: string;
@@ -363,7 +526,7 @@ export default function Home() {
       try {
         setProcessingStatus('Fetching ayah text and audio...');
         const params = new URLSearchParams({
-          reciterName: config.reciterName,
+          reciterId: config.reciterId,
           surahNumber: String(config.surahNumber),
           fromAyah: String(config.fromAyah),
           toAyah: String(config.toAyah),
@@ -373,6 +536,10 @@ export default function Home() {
         const surahJson = await surahRes.json();
         if (!surahRes.ok) {
           throw new Error(surahJson?.error || 'Failed to fetch surah data.');
+        }
+
+        if (surahJson.warning) {
+          console.warn('quran-surah warning:', surahJson.warning);
         }
 
         const selectedAyahs: {
@@ -394,7 +561,7 @@ export default function Home() {
           const ayah = selectedAyahs[i];
 
           if (!ayah.audioUrl) {
-            throw new Error(`Missing audio for ayah ${ayah.ayahNumber}.`);
+            throw new Error(`Missing audio for ayah ${ayah.ayahNumber}. This reciter may not have audio for this ayah — try a different reciter.`);
           }
 
           const proxiedUrl = `/api/quran-audio?url=${encodeURIComponent(ayah.audioUrl)}`;
@@ -403,15 +570,20 @@ export default function Home() {
             return r.arrayBuffer();
           });
 
-          decodedBuffers.push(await audioCtx.decodeAudioData(arrayBuffer));
+          const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+          decodedBuffers.push(decoded);
+
         }
 
         setProcessingStatus('Stitching ayahs together...');
-        const gapSeconds = 0.35;
         const sampleRate = decodedBuffers[0].sampleRate;
-        const gapSamples = Math.round(gapSeconds * sampleRate);
+
+        const crossfadeSeconds = 0.045;
+        const crossfadeSamples = Math.round(crossfadeSeconds * sampleRate);
+
         const totalSamples =
-          decodedBuffers.reduce((sum, b) => sum + b.length, 0) + gapSamples * (decodedBuffers.length - 1);
+          decodedBuffers.reduce((sum, b) => sum + b.length, 0) -
+          crossfadeSamples * Math.max(0, decodedBuffers.length - 1);
 
         const combinedBuffer = audioCtx.createBuffer(1, totalSamples, sampleRate);
         const combinedData = combinedBuffer.getChannelData(0);
@@ -419,13 +591,30 @@ export default function Home() {
         const builtAyahs: MatchedAyah[] = [];
         let cursor = 0;
 
+
         for (let i = 0; i < decodedBuffers.length; i++) {
           const buf = decodedBuffers[i];
-          combinedData.set(buf.getChannelData(0), cursor);
+          const sourceData = buf.getChannelData(0);
+          const fadeSamples = i === 0 ? 0 : Math.min(crossfadeSamples, sourceData.length, cursor);
 
-          const startTime = cursor / sampleRate;
-          const endTime = (cursor + buf.length) / sampleRate;
+          const startTime = (cursor - fadeSamples) / sampleRate;
+          const endTime = (cursor - fadeSamples + buf.length) / sampleRate;
           const ayahMeta = selectedAyahs[i];
+
+          if (i === 0 || fadeSamples <= 0) {
+            combinedData.set(sourceData, cursor);
+          } else {
+            for (let s = 0; s < fadeSamples; s++) {
+              const fadeIn = s / fadeSamples;
+              const fadeOut = 1 - fadeIn;
+
+              combinedData[cursor - fadeSamples + s] =
+                combinedData[cursor - fadeSamples + s] * fadeOut + sourceData[s] * fadeIn;
+            }
+
+            combinedData.set(sourceData.subarray(fadeSamples), cursor);
+          }
+
 
           const wordsArr = (ayahMeta.arabic || '').split(/\s+/).filter(Boolean);
           const wordsList: WordTimestamp[] = [];
@@ -441,21 +630,82 @@ export default function Home() {
             }
           }
 
-          builtAyahs.push({
-            surah: config.surahNumber,
-            surahName: config.surahName,
-            surahEnglishName: config.surahName,
-            ayahNumber: ayahMeta.ayahNumber,
-            arabic: ayahMeta.arabic,
-            translation: ayahMeta.translation,
-            isFullAyah: true,
-            startTime,
-            endTime,
-            duration: endTime - startTime,
-            words: wordsList,
-          });
+          const arabicChunks = splitArabicIntoDisplayChunks(ayahMeta.arabic, 2);
+          const translationChunks = splitTranslationByArabicRatio(
+            ayahMeta.translation,
+            arabicChunks,
+            ayahMeta.arabic,
+          );
 
-          cursor += buf.length + gapSamples;
+          const chunkCount = arabicChunks.length;
+
+          // Weight each chunk's time slice by character count instead of
+          // splitting time evenly — chunks vary a lot in length, so equal
+          // splits drift out of sync on long ayahs.
+          const chunkWeights = arabicChunks.map((c) =>
+            Math.max(1, splitByWords(c).reduce((sum, w) => sum + w.length, 0)),
+          );
+          const totalWeight = chunkWeights.reduce((a, b) => a + b, 0);
+          const ayahDuration = endTime - startTime;
+
+          const chunkBounds: { start: number; end: number }[] = [];
+          let boundsCursor = startTime;
+          for (let ci = 0; ci < chunkCount; ci++) {
+            const isLast = ci === chunkCount - 1;
+            const cStart = boundsCursor;
+            const cEnd = isLast ? endTime : cStart + (chunkWeights[ci] / totalWeight) * ayahDuration;
+            chunkBounds.push({ start: cStart, end: cEnd });
+            boundsCursor = cEnd;
+          }
+
+          for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++) {
+            const chunkStart = chunkBounds[chunkIndex].start;
+            const chunkEnd = chunkBounds[chunkIndex].end;
+
+            const chunkArabic = arabicChunks[chunkIndex] || '';
+            const chunkTranslation =
+              translationChunks[chunkIndex] ||
+              translationChunks[translationChunks.length - 1] ||
+              '';
+
+
+            const chunkWordsArr = chunkArabic.split(/\s+/).filter(Boolean);
+            const chunkWordsList: WordTimestamp[] = [];
+
+            if (chunkWordsArr.length > 0) {
+              const dur = chunkEnd - chunkStart;
+              const perWord = Math.max(0.1, dur / chunkWordsArr.length);
+
+              for (let wIdx = 0; wIdx < chunkWordsArr.length; wIdx++) {
+                chunkWordsList.push({
+                  word: chunkWordsArr[wIdx],
+                  start: Number((chunkStart + wIdx * perWord).toFixed(3)),
+                  end: Number((chunkStart + (wIdx + 1) * perWord).toFixed(3)),
+                });
+              }
+            }
+
+            builtAyahs.push({
+              surah: config.surahNumber,
+              surahName: config.surahName,
+              surahEnglishName: config.surahName,
+              ayahNumber: ayahMeta.ayahNumber,
+              arabic: chunkArabic,
+              translation: chunkTranslation,
+              isFullAyah: true,
+              isChunk: chunkCount > 1,
+              chunkIndex,
+              totalChunks: chunkCount,
+              startTime: chunkStart,
+              endTime: chunkEnd,
+              duration: chunkEnd - chunkStart,
+              words: chunkWordsList,
+            });
+          }
+
+
+          cursor += i === 0 ? buf.length : buf.length - crossfadeSamples;
+
         }
 
         const totalDuration = totalSamples / sampleRate;
@@ -481,7 +731,7 @@ export default function Home() {
         setProcessingStatus('');
       }
     },
-    []
+    [],
   );
 
   const reset = () => {
@@ -672,7 +922,19 @@ export default function Home() {
                 englishPosition={englishPosition}
                 onArabicPositionChange={setArabicPosition}
                 onEnglishPositionChange={setEnglishPosition}
+                textAnimation={textAnimation}
+                arabicLineHeight={arabicLineHeight}
+                englishLineHeight={englishLineHeight}
+                arabicPadding={arabicPadding}
+                englishPadding={englishPadding}
               />
+
+              <div className="rounded-md border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-sm text-emerald-900">
+                <p className="font-medium">Check Arabic &amp; translation below</p>
+                <p className="text-emerald-800/80 text-xs mt-0.5 leading-relaxed">
+                  You can review the Arabic text and English translation for each ayah in the timeline below. Play the preview, open any segment, and fix wording or timing before exporting.
+                </p>
+              </div>
 
               {/* Timeline directly below video */}
               <div className="bg-white rounded-md p-4 border border-zinc-200">
@@ -685,6 +947,7 @@ export default function Home() {
                   duration={videoDuration}
                   currentTime={currentTime}
                   onSeek={handleTimelineSeek}
+                  globalTextStyle={globalTextStyle}
                 />
               </div>
             </div>
@@ -821,6 +1084,75 @@ export default function Home() {
                 </div>
 
                 <div className="space-y-3 pt-2 border-t border-zinc-100">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-zinc-500 block">Entrance animation (default for all ayahs)</label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {TEXT_ANIMATION_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => setTextAnimation(opt.value)}
+                          className={`px-2 py-1.5 rounded text-xs transition-colors ${textAnimation === opt.value ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-zinc-400">Override per ayah in the timeline below.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3 pt-2 border-t border-zinc-100">
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-xs text-zinc-500">
+                      <span>Arabic line height</span>
+                      <span>{arabicLineHeight.toFixed(2)}</span>
+                    </div>
+                    <input
+                      type="range" min="1" max="3" step="0.05"
+                      value={arabicLineHeight}
+                      onChange={(e) => setArabicLineHeight(parseFloat(e.target.value))}
+                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-xs text-zinc-500">
+                      <span>English line height</span>
+                      <span>{englishLineHeight.toFixed(2)}</span>
+                    </div>
+                    <input
+                      type="range" min="1" max="3" step="0.05"
+                      value={englishLineHeight}
+                      onChange={(e) => setEnglishLineHeight(parseFloat(e.target.value))}
+                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-xs text-zinc-500">
+                      <span>Arabic padding</span>
+                      <span>{arabicPadding}px</span>
+                    </div>
+                    <input
+                      type="range" min="0" max="48" step="1"
+                      value={arabicPadding}
+                      onChange={(e) => setArabicPadding(parseInt(e.target.value))}
+                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-xs text-zinc-500">
+                      <span>English padding</span>
+                      <span>{englishPadding}px</span>
+                    </div>
+                    <input
+                      type="range" min="0" max="48" step="1"
+                      value={englishPadding}
+                      onChange={(e) => setEnglishPadding(parseInt(e.target.value))}
+                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-3 pt-2 border-t border-zinc-100">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-zinc-600">Show translation</span>
                     <button
@@ -939,6 +1271,11 @@ export default function Home() {
             verticalPosition={verticalPosition}
             arabicFontSize={arabicFontSize}
             englishFontSize={englishFontSize}
+            textAnimation={textAnimation}
+            arabicLineHeight={arabicLineHeight}
+            englishLineHeight={englishLineHeight}
+            arabicPadding={arabicPadding}
+            englishPadding={englishPadding}
             onBack={() => setStep('edit')}
             wordHighlight={wordHighlight}
           />

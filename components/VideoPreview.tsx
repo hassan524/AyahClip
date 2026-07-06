@@ -2,6 +2,11 @@
 
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { BackgroundConfig, MatchedAyah } from '@/app/page';
+import {
+  TextAnimation,
+  GlobalTextStyle,
+  resolveAyahStyle,
+} from '@/lib/ayah-styles';
 
 // ============================================================
 // TYPES
@@ -15,8 +20,8 @@ export interface TextPosition {
 }
 
 export type AspectRatio = '16:9' | '9:16' | '1:1' | '4:5';
-export type TextAnimation = 'none' | 'fade' | 'slide-up' | 'scale';
 export type SurahLabelLang = 'arabic' | 'english' | 'both';
+export type { TextAnimation };
 
 interface Props {
   videoUrl: string;
@@ -43,12 +48,12 @@ interface Props {
   // ---- Format / layout controls ----
   aspectRatio?: AspectRatio;
 
-  // ---- Motion ----
+  // ---- Motion & spacing (global defaults; per-ayah overrides live on MatchedAyah.style) ----
   textAnimation?: TextAnimation;
-
-  // ---- Spacing ----
   arabicLineHeight?: number;
   englishLineHeight?: number;
+  arabicPadding?: number;
+  englishPadding?: number;
 
   // ---- Draggable text positions ----
   // If null, we fall back to a computed default position (based on verticalPosition).
@@ -93,6 +98,8 @@ export default function VideoPreview({
   textAnimation = 'fade',
   arabicLineHeight = 1.75,
   englishLineHeight = 1.6,
+  arabicPadding = 0,
+  englishPadding = 0,
   arabicPosition = null,
   englishPosition = null,
   onArabicPositionChange,
@@ -284,14 +291,14 @@ export default function VideoPreview({
   // ============================================================
   // RENDER ARABIC TEXT — with optional word-by-word karaoke highlight
   // ============================================================
-  const renderArabic = (ayah: MatchedAyah) => {
+  const renderArabic = (ayah: MatchedAyah, color: string) => {
     const dbWords = ayah.arabic.split(/\s+/).filter(Boolean);
     const wWords = ayah.words || []; // precise per-word timestamps, if we have them from transcription
 
     // Highlight disabled — just render plain colored text
     if (!wordHighlight) {
       return (
-        <span style={{ color: textColor, textShadow: '0 2px 8px rgba(0,0,0,1)' }}>
+        <span style={{ color, textShadow: '0 2px 8px rgba(0,0,0,1)' }}>
           {ayah.arabic}
         </span>
       );
@@ -316,7 +323,7 @@ export default function VideoPreview({
               style={{
                 display: 'inline-block',
                 margin: '0 3px',
-                color: i === activeIdx ? '#34d399' : textColor,
+                color: i === activeIdx ? '#34d399' : color,
                 opacity: i < activeIdx ? 1 : i === activeIdx ? 1 : 0.3,
                 textShadow:
                   i === activeIdx
@@ -347,7 +354,7 @@ export default function VideoPreview({
               style={{
                 display: 'inline-block',
                 margin: '0 3px',
-                color: isActive ? '#34d399' : textColor,
+                color: isActive ? '#34d399' : color,
                 opacity: isPast ? 1 : isActive ? 1 : 0.3,
                 textShadow: isActive
                   ? '0 0 20px rgba(52,211,153,0.9), 0 2px 8px rgba(0,0,0,1)'
@@ -377,6 +384,23 @@ export default function VideoPreview({
   };
 
   const visible = currentAyah !== null;
+
+  const globalStyle: GlobalTextStyle = {
+    textAnimation,
+    arabicFontSize,
+    englishFontSize,
+    arabicLineHeight,
+    englishLineHeight,
+    arabicPadding,
+    englishPadding,
+    textColor,
+  };
+
+  const activeStyle = currentAyah
+    ? resolveAyahStyle(currentAyah.style, globalStyle)
+    : globalStyle;
+
+  const renderColor = activeStyle.textColor;
 
   // ============================================================
   // DEFAULT TEXT POSITIONS
@@ -536,7 +560,9 @@ export default function VideoPreview({
   })();
 
   // Maps the chosen animation to a CSS class (keyframes defined in the <style> block below)
-  const animClass = textAnimation === 'none' ? '' : `ayahclip-anim-${textAnimation}`;
+  const animClass = activeStyle.textAnimation === 'none'
+    ? ''
+    : `ayahclip-anim-${activeStyle.textAnimation}`;
 
   // ============================================================
   // RENDER
@@ -620,6 +646,7 @@ export default function VideoPreview({
                 top: `${arabicPos.y}%`,
                 transform: 'translate(-50%, -50%)', // position refers to the CENTER of the block
                 width: 'min(92%, 900px)',
+                padding: `${activeStyle.arabicPadding}px`,
                 touchAction: 'none', // required so touch-dragging doesn't scroll the page on mobile
                 outline: draggingTarget === 'arabic' ? '1px dashed rgba(255,255,255,0.6)' : 'none',
                 outlineOffset: '6px',
@@ -627,13 +654,13 @@ export default function VideoPreview({
             >
               <div style={{
                 fontFamily: `"${arabicFont}", serif`,
-                fontSize: `${arabicFontSize}px`,
-                lineHeight: arabicLineHeight,
+                fontSize: `${activeStyle.arabicFontSize}px`,
+                lineHeight: activeStyle.arabicLineHeight,
                 direction: 'rtl',
                 textAlign: arabicAlign,
                 wordBreak: 'break-word',
               }}>
-                {renderArabic(currentAyah)}
+                {renderArabic(currentAyah, renderColor)}
 
                 {/* Ayah-end marker ۝ with the ayah number inside it (only for full, numbered ayahs) */}
                 {currentAyah.isFullAyah && currentAyah.ayahNumber !== null && currentAyah.ayahNumber !== 0 && (
@@ -645,8 +672,8 @@ export default function VideoPreview({
                     lineHeight: 1,
                   }}>
                     <span style={{
-                      fontSize: `${arabicFontSize * 1.1}px`,
-                      color: textColor,
+                      fontSize: `${activeStyle.arabicFontSize * 1.1}px`,
+                      color: renderColor,
                       opacity: 0.85,
                       textShadow: `0 0 16px rgba(52,211,153,0.5), 0 2px 8px rgba(0,0,0,1)`,
                       fontFamily: `"Scheherazade New", "Amiri", serif`,
@@ -658,8 +685,8 @@ export default function VideoPreview({
                       top: '50%',
                       left: '50%',
                       transform: 'translate(-50%, -50%)',
-                      fontSize: `${Math.max(10, arabicFontSize * 0.32)}px`,
-                      color: textColor,
+                      fontSize: `${Math.max(10, activeStyle.arabicFontSize * 0.32)}px`,
+                      color: renderColor,
                       fontFamily: `"Scheherazade New", "Amiri", serif`,
                       pointerEvents: 'none',
                       lineHeight: 1,
@@ -687,6 +714,7 @@ export default function VideoPreview({
                 top: `${englishPos.y}%`,
                 transform: 'translate(-50%, -50%)',
                 width: 'min(90%, 800px)',
+                padding: `${activeStyle.englishPadding}px`,
                 touchAction: 'none',
                 outline: draggingTarget === 'english' ? '1px dashed rgba(255,255,255,0.6)' : 'none',
                 outlineOffset: '6px',
@@ -694,11 +722,11 @@ export default function VideoPreview({
             >
               {showTranslation && currentAyah.translation && (
                 <p style={{
-                  color: textColor, opacity: 0.9,
+                  color: renderColor, opacity: 0.9,
                   fontFamily: `"${englishFont}", sans-serif`,
-                  fontSize: `${englishFontSize}px`,
+                  fontSize: `${activeStyle.englishFontSize}px`,
                   textAlign: englishAlign,
-                  lineHeight: englishLineHeight,
+                  lineHeight: activeStyle.englishLineHeight,
                   textShadow: '0 1px 6px rgba(0,0,0,0.95)',
                   margin: 0,
                 }}>
@@ -708,7 +736,7 @@ export default function VideoPreview({
 
               {surahLabelText && (
                 <p style={{
-                  color: textColor, opacity: 0.45,
+                  color: renderColor, opacity: 0.45,
                   fontFamily: `"${englishFont}", sans-serif`,
                   fontSize: '11px',
                   textAlign: englishAlign,

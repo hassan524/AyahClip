@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { RECITERS, type Reciter } from "@/lib/reciters";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -18,12 +19,6 @@ interface Props {
   }) => void;
 }
 
-interface Reciter {
-  id: string;
-  name: string;
-  initials: string;
-}
-
 interface Surah {
   number: number;
   name: string;
@@ -32,22 +27,8 @@ interface Surah {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Data                                                               */
+/*  Data (Reciters now live in lib/reciters.ts — see that file to add) */
 /* ------------------------------------------------------------------ */
-
-const RECITERS: Reciter[] = [
-  { id: 'ar.alafasy',            name: 'Mishary Rashid Alafasy',     initials: 'MA' },
-  { id: 'ar.abdurrahmaansudais', name: 'Abdul Rahman Al-Sudais',     initials: 'AS' },
-  { id: 'ar.abdulbasitmurattal', name: 'Abdul Basit Abdul Samad',    initials: 'AB' },
-  { id: 'ar.mahermuaiqly',       name: 'Maher Al Muaiqly',           initials: 'MM' },
-  { id: 'ar.saoodshuraym',       name: 'Saud Al-Shuraim',            initials: 'SS' },
-  { id: 'ar.hanirifai',          name: 'Hani Ar-Rifai',              initials: 'HR' },
-  { id: 'ar.shaatree',           name: 'Abu Bakr Al-Shatri',         initials: 'AS' },
-  { id: 'ar.ahmedajamy',         name: 'Ahmad Al-Ajmi',              initials: 'AA' },
-  { id: 'ar.abdullahbasfar',     name: 'Abdullah Basfar',            initials: 'AB' },
-  { id: 'ar.hudhaify',           name: 'Ali Al-Hudhaify',            initials: 'AH' },
-  { id: 'ar.minshawi',           name: 'Mohamed Siddiq El-Minshawi', initials: 'ME' },
-];
 
 const SURAH_NAMES = [
   'Al-Fatihah','Al-Baqarah','Ali \'Imran','An-Nisa','Al-Ma\'idah','Al-An\'am',
@@ -116,6 +97,7 @@ export default function CreateFromVerse({ onGenerate }: Props) {
   /* ---------- state ---------- */
   const [reciter, setReciter] = useState<Reciter>(RECITERS[0]);
   const [reciterOpen, setReciterOpen] = useState(false);
+  const [reciterSearch, setReciterSearch] = useState('');
 
   const [surah, setSurah] = useState<Surah>(SURAHS[0]);
   const [surahOpen, setSurahOpen] = useState(false);
@@ -146,6 +128,13 @@ export default function CreateFromVerse({ onGenerate }: Props) {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
+
+  /* ---------- filtered reciters ---------- */
+  const filteredReciters = useMemo(() => {
+    if (!reciterSearch.trim()) return RECITERS;
+    const q = reciterSearch.toLowerCase();
+    return RECITERS.filter((r) => r.name.toLowerCase().includes(q));
+  }, [reciterSearch]);
 
   /* ---------- filtered surahs ---------- */
   const filteredSurahs = useMemo(() => {
@@ -201,7 +190,7 @@ export default function CreateFromVerse({ onGenerate }: Props) {
         <div ref={reciterRef} className="relative">
           <button
             type="button"
-            onClick={() => setReciterOpen((o) => !o)}
+            onClick={() => { setReciterOpen((o) => !o); setReciterSearch(''); }}
             className="w-full flex items-center gap-3 border border-zinc-200 rounded-lg px-3.5 py-2.5 bg-zinc-50 hover:bg-zinc-100 transition-colors text-left cursor-pointer group"
           >
             {/* avatar */}
@@ -221,28 +210,50 @@ export default function CreateFromVerse({ onGenerate }: Props) {
           </button>
 
           {reciterOpen && (
-            <ul className="absolute z-30 mt-1.5 w-full bg-white border border-zinc-200 rounded-lg shadow-lg max-h-64 overflow-y-auto py-1 animate-[fadeIn_120ms_ease-out]">
-              {RECITERS.map((r) => (
-                <li key={r.id}>
-                  <button
-                    type="button"
-                    onClick={() => { setReciter(r); setReciterOpen(false); }}
-                    className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left transition-colors cursor-pointer
-                      ${r.id === reciter.id ? 'bg-emerald-50 text-emerald-900' : 'hover:bg-zinc-50 text-zinc-800'}`}
-                  >
-                    <span className="shrink-0 w-8 h-8 rounded-full bg-emerald-700/90 flex items-center justify-center text-white text-[11px] font-bold tracking-wide">
-                      {r.initials}
-                    </span>
-                    <span className="text-sm font-medium truncate">{r.name}</span>
-                    {r.id === reciter.id && (
-                      <svg className="ml-auto w-4 h-4 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <div className="absolute z-30 mt-1.5 w-full bg-white border border-zinc-200 rounded-lg shadow-lg overflow-hidden animate-[fadeIn_120ms_ease-out]">
+              {/* search — needed now that the list is much longer */}
+              <div className="px-3 py-2 border-b border-zinc-100">
+                <div className="relative">
+                  <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input
+                    autoFocus
+                    type="text"
+                    placeholder="Search reciter…"
+                    value={reciterSearch}
+                    onChange={(e) => setReciterSearch(e.target.value)}
+                    className="w-full pl-8 pr-3 py-2 text-sm rounded-md border border-zinc-200 bg-zinc-50 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all placeholder:text-zinc-400"
+                  />
+                </div>
+              </div>
+
+              <ul className="max-h-64 overflow-y-auto py-1">
+                {filteredReciters.length === 0 && (
+                  <li className="px-4 py-6 text-center text-sm text-zinc-400">No reciters found</li>
+                )}
+                {filteredReciters.map((r) => (
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      onClick={() => { setReciter(r); setReciterOpen(false); setReciterSearch(''); }}
+                      className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left transition-colors cursor-pointer
+                        ${r.id === reciter.id ? 'bg-emerald-50 text-emerald-900' : 'hover:bg-zinc-50 text-zinc-800'}`}
+                    >
+                      <span className="shrink-0 w-8 h-8 rounded-full bg-emerald-700/90 flex items-center justify-center text-white text-[11px] font-bold tracking-wide">
+                        {r.initials}
+                      </span>
+                      <span className="text-sm font-medium truncate">{r.name}</span>
+                      {r.id === reciter.id && (
+                        <svg className="ml-auto w-4 h-4 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       </section>

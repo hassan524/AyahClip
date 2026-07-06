@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect } from 'react';
 
-type RecordingState = 'idle' | 'recording' | 'stopped' | 'permission-denied';
+type RecordingState = 'idle' | 'confirm' | 'recording' | 'stopped' | 'permission-denied';
 
 interface Props {
   onRecordingComplete: (file: File, url: string, duration: number) => void;
@@ -85,6 +85,10 @@ export default function VoiceRecorder({ onRecordingComplete }: Props) {
   }, []);
 
   /* ---------- start ---------- */
+  const requestStart = useCallback(() => {
+    setState('confirm');
+  }, []);
+
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -244,7 +248,48 @@ export default function VoiceRecorder({ onRecordingComplete }: Props) {
     );
   }
 
-  /* Idle / Recording */
+  /* Idle / Confirm / Recording */
+  if (state === 'confirm') {
+    return (
+      <div className="border border-zinc-200 rounded-md bg-white p-8 space-y-5">
+        <div className="text-center space-y-1">
+          <h3 className="text-lg font-semibold text-emerald-950">Before You Record</h3>
+          <p className="text-sm text-zinc-500">A few tips for the best ayah matching</p>
+        </div>
+
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 space-y-2">
+          <p className="font-medium">Please make sure:</p>
+          <ul className="list-disc list-inside space-y-1 text-amber-900/90 leading-relaxed">
+            <li>Your <strong>tajweed</strong> is correct and pronunciation is clear</li>
+            <li>You record in a <strong>quiet place</strong> with minimal background noise</li>
+            <li>Your <strong>voice is clear</strong> and at a steady, moderate pace</li>
+            <li>You recite one ayah at a time with a brief pause between ayahs</li>
+          </ul>
+        </div>
+
+        <div className="flex items-center justify-center gap-3 pt-1">
+          <button
+            type="button"
+            onClick={() => setState('idle')}
+            className="px-5 py-2.5 rounded-md border border-zinc-300 text-zinc-700 text-sm font-medium bg-white hover:bg-zinc-50"
+          >
+            Go Back
+          </button>
+          <button
+            type="button"
+            onClick={startRecording}
+            className="inline-flex items-center gap-2 bg-emerald-800 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-md text-sm font-medium"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+            </svg>
+            Start Recording
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="border border-zinc-200 rounded-md bg-white p-8 space-y-6">
       {/* heading */}
@@ -258,23 +303,15 @@ export default function VoiceRecorder({ onRecordingComplete }: Props) {
       {/* microphone button */}
       <div className="flex justify-center">
         <button
-          onClick={state === 'idle' ? startRecording : stopRecording}
+          onClick={state === 'idle' ? requestStart : stopRecording}
           className="relative group focus:outline-none"
           aria-label={state === 'idle' ? 'Start recording' : 'Stop recording'}
         >
-          {/* pulsing rings (only while recording) */}
-          {state === 'recording' && (
-            <>
-              <span className="absolute inset-0 rounded-full bg-red-400/20 animate-ping" />
-              <span className="absolute -inset-2 rounded-full border-2 border-red-400/40 animate-pulse" />
-            </>
-          )}
-
           <span
-            className={`relative flex items-center justify-center w-20 h-20 rounded-full transition-all duration-300 shadow-lg
+            className={`relative flex items-center justify-center w-20 h-20 rounded-full shadow-md
               ${state === 'recording'
-                ? 'bg-red-500 hover:bg-red-600 shadow-red-300/50'
-                : 'bg-emerald-800 hover:bg-emerald-700 shadow-emerald-300/40 group-hover:shadow-emerald-400/50'
+                ? 'bg-red-500 hover:bg-red-600'
+                : 'bg-emerald-800 hover:bg-emerald-700'
               }`}
           >
             {state === 'recording' ? (
@@ -299,12 +336,9 @@ export default function VoiceRecorder({ onRecordingComplete }: Props) {
       <p className="text-center text-sm text-zinc-500">
         {state === 'recording' ? (
           <span className="inline-flex items-center gap-2">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
-            </span>
+            <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
             <span className="font-mono text-lg font-semibold text-emerald-900">{fmt(elapsed)}</span>
-            <span className="text-zinc-400 text-xs ml-1">recording…</span>
+            <span className="text-zinc-400 text-xs">recording</span>
           </span>
         ) : (
           'Tap the microphone to start recording'
@@ -313,9 +347,7 @@ export default function VoiceRecorder({ onRecordingComplete }: Props) {
 
       {/* waveform canvas */}
       <div
-        className={`transition-all duration-300 overflow-hidden ${
-          state === 'recording' ? 'max-h-24 opacity-100' : 'max-h-0 opacity-0'
-        }`}
+        className={`overflow-hidden ${state === 'recording' ? 'block' : 'hidden'}`}
       >
         <canvas
           ref={canvasRef}

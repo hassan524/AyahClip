@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { BackgroundConfig, MatchedAyah } from '@/app/page';
+import { GlobalTextStyle, resolveAyahStyle } from '@/lib/ayah-styles';
 
 const LINGER_SEC = 0.5;
 
@@ -77,6 +78,11 @@ interface Props {
   verticalPosition: 'center' | 'bottom';
   arabicFontSize: number;
   englishFontSize: number;
+  textAnimation?: GlobalTextStyle['textAnimation'];
+  arabicLineHeight?: number;
+  englishLineHeight?: number;
+  arabicPadding?: number;
+  englishPadding?: number;
   wordHighlight?: boolean;
   onBack: () => void;
 }
@@ -85,8 +91,23 @@ export default function ExportPanel({
   videoFile, videoUrl, isAudioOnly = false, ayahs, background, textColor, showTranslation,
   videoOpacity, overlayType, overlayOpacity, arabicFont, englishFont,
   arabicAlign, englishAlign, verticalPosition, arabicFontSize, englishFontSize,
+  textAnimation = 'fade',
+  arabicLineHeight = 1.75,
+  englishLineHeight = 1.6,
+  arabicPadding = 0,
+  englishPadding = 0,
   wordHighlight = false, onBack,
 }: Props) {
+  const globalTextStyle: GlobalTextStyle = {
+    textAnimation,
+    arabicFontSize,
+    englishFontSize,
+    arabicLineHeight,
+    englishLineHeight,
+    arabicPadding,
+    englishPadding,
+    textColor,
+  };
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const bgVideoRef = useRef<HTMLVideoElement>(null);
@@ -136,13 +157,14 @@ export default function ExportPanel({
     yBottom: number,
     maxWidth: number,
     padding: number,
+    style: ReturnType<typeof resolveAyahStyle>,
   ): number {
     const dbWords = ayah.arabic.split(/\s+/).filter(Boolean);
     const wWords = ayah.words || [];
     const GAP = 6;
-    const lineH = arabicFontSize + 10;
+    const lineH = style.arabicFontSize * style.arabicLineHeight;
 
-    ctx.font = `${arabicFontSize}px "${arabicFont}", serif`;
+    ctx.font = `${style.arabicFontSize}px "${arabicFont}", serif`;
 
     const lines: string[][] = [];
     let curLine: string[] = [];
@@ -173,7 +195,7 @@ export default function ExportPanel({
 
       for (const word of lineWords) {
         const wordW = ctx.measureText(word).width;
-        let color = textColor;
+        let color = style.textColor;
         let alpha = 1.0;
         let glowOn = false;
 
@@ -265,16 +287,17 @@ export default function ExportPanel({
     const ayah = getAyahAt(time);
     if (!ayah) return;
 
+    const style = resolveAyahStyle(ayah.style, globalTextStyle);
     const engFontStr = `"${englishFont}", sans-serif`;
 
-    ctx.font = `${englishFontSize}px ${engFontStr}`;
+    ctx.font = `${style.englishFontSize}px ${engFontStr}`;
     const transLines = showTranslation && ayah.translation
       ? wrapText(ctx, ayah.translation, maxWidth)
       : [];
-    const transLineH = englishFontSize + 6;
-    const transBlockH = transLines.length > 0 ? transLines.length * transLineH + 16 : 0;
+    const transLineH = style.englishFontSize * style.englishLineHeight;
+    const transBlockH = transLines.length > 0 ? transLines.length * transLineH + 16 + style.englishPadding * 2 : 0;
 
-    ctx.font = `${arabicFontSize}px "${arabicFont}", serif`;
+    ctx.font = `${style.arabicFontSize}px "${arabicFont}", serif`;
     const arabicWords = ayah.arabic.split(/\s+/).filter(Boolean);
     let arabicLineCount = 1, lw = 0;
     for (const w of arabicWords) {
@@ -282,7 +305,7 @@ export default function ExportPanel({
       if (lw + ww > maxWidth && lw > 0) { arabicLineCount++; lw = ww; }
       else lw += ww;
     }
-    const arabicBlockH = arabicLineCount * (arabicFontSize + 10);
+    const arabicBlockH = arabicLineCount * (style.arabicFontSize * style.arabicLineHeight) + style.arabicPadding * 2;
     const labelBlockH = 28;
     const totalH = arabicBlockH + transBlockH + labelBlockH;
 
@@ -292,7 +315,7 @@ export default function ExportPanel({
     let y = yBottom;
 
     ctx.font = `13px ${engFontStr}`;
-    ctx.fillStyle = textColor;
+    ctx.fillStyle = style.textColor;
     ctx.globalAlpha = 0.4;
     ctx.shadowColor = 'rgba(0,0,0,0.9)';
     ctx.shadowBlur = 4;
@@ -306,8 +329,8 @@ export default function ExportPanel({
     y -= labelBlockH;
 
     if (transLines.length > 0) {
-      ctx.font = `${englishFontSize}px ${engFontStr}`;
-      ctx.fillStyle = textColor;
+      ctx.font = `${style.englishFontSize}px ${engFontStr}`;
+      ctx.fillStyle = style.textColor;
       ctx.globalAlpha = 0.88;
       ctx.shadowColor = 'rgba(0,0,0,0.95)';
       ctx.shadowBlur = 6;
@@ -323,7 +346,7 @@ export default function ExportPanel({
 
     ctx.shadowColor = 'rgba(0,0,0,0.95)';
     ctx.shadowBlur = 8;
-    drawArabicWords(ctx, ayah, time, W, y, maxWidth, padding);
+    drawArabicWords(ctx, ayah, time, W, y, maxWidth, padding, style);
 
     ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
