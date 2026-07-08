@@ -107,7 +107,7 @@ async function fetchOfficialAyahData(surah: number, ayah: number): Promise<Offic
 
 function splitMuqattaatTranslation(translation: string): [string, string] {
   const clean = translation.trim();
-  const match = clean.match(/^([^.!?]*[.!?])\s*(.*)$/s);
+  const match = clean.match(/^([^.!?]*[.!?])\s*([\s\S]*)$/);
   if (match && match[1] && match[2]) {
     return [match[1].trim(), match[2].trim()];
   }
