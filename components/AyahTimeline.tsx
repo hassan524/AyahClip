@@ -27,6 +27,7 @@ function formatTime(s: number) {
 
 function colorFor(ayah: MatchedAyah): string {
   if (ayah.isBismillah) return '#f59e0b';
+  if (ayah.isIstiadhah) return '#8b5cf6';
   if (ayah.surah === null || !ayah.isFullAyah) return '#71717a';
   return '#10b981';
 }
@@ -47,8 +48,6 @@ type DragMode =
   | { kind: 'move'; index: number; grabOffset: number }
   | null;
 
-// Finds the closest snap target to `t` (in seconds) within `thresholdSec`.
-// Returns the snapped value, or the original `t` if nothing is close enough.
 function snapTo(t: number, targets: number[], thresholdSec: number): { value: number; snapped: number | null } {
   let best: number | null = null;
   let bestDist = thresholdSec;
@@ -67,13 +66,12 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
   const [detecting, setDetecting] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [trackWidth, setTrackWidth] = useState(1000);
-  const [snapGuide, setSnapGuide] = useState<number | null>(null); // seconds, for the magnetic guide line
+  const [snapGuide, setSnapGuide] = useState<number | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragMode>(null);
 
   const safeDuration = duration > 0 ? duration : (ayahs.length ? ayahs[ayahs.length - 1].endTime : 1);
 
-  // ---------- live refs (avoid stale closures inside the pointermove handler) ----------
   const ayahsRef = useRef(ayahs);
   useEffect(() => { ayahsRef.current = ayahs; }, [ayahs]);
 
@@ -104,8 +102,6 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
     return arr;
   }, [safeDuration, tickInterval]);
 
-  // ---------- drag / seek ----------
-
   const timeFromClientX = useCallback((clientX: number) => {
     const track = trackRef.current;
     if (!track) return 0;
@@ -114,8 +110,6 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
     return Number((pct * safeDurationRef.current).toFixed(2));
   }, []);
 
-  // Stable across the whole component lifetime — always reads *live* data via refs,
-  // so a single continuous drag never fights a stale snapshot of `ayahs`.
   const handlePointerMove = useCallback((e: PointerEvent) => {
     const drag = dragRef.current;
     if (!drag) return;
@@ -126,9 +120,10 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
     const list = [...liveAyahs];
 
     const trackPxWidth = trackRef.current?.getBoundingClientRect().width || 1000;
-    const snapThresholdSec = (liveDuration / trackPxWidth) * 10; // ~10px magnetic radius
+    // Smaller pixel radius = you can freely place a segment anywhere; it only
+    // locks on once you actually drag it right up against another edge.
+    const snapThresholdSec = (liveDuration / trackPxWidth) * 5;
 
-    // Snap targets: playhead + every OTHER ayah's start/end (skip the one being dragged)
     const snapTargets: number[] = [liveCurrentTime];
     liveAyahs.forEach((a, idx) => {
       if (idx === drag.index) return;
@@ -154,7 +149,6 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
       list[drag.index] = item;
       setSnapGuide(snapped);
     } else {
-      // Whole-segment move: keep duration fixed, shift both start & end.
       const item = { ...list[drag.index] };
       const dur = item.endTime - item.startTime;
       const prev = list[drag.index - 1];
@@ -162,7 +156,6 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
       const rawStart = timeFromClientX(e.clientX) - drag.grabOffset;
       const rawEnd = rawStart + dur;
 
-      // Try snapping either edge; whichever is closer wins.
       const startSnap = snapTo(rawStart, snapTargets, snapThresholdSec);
       const endSnap = snapTo(rawEnd, snapTargets, snapThresholdSec);
 
@@ -235,8 +228,6 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
   const playheadPct = safeDuration > 0 ? Math.min(100, (currentTime / safeDuration) * 100) : 0;
   const snapGuidePct = snapGuide !== null && safeDuration > 0 ? Math.min(100, (snapGuide / safeDuration) * 100) : null;
 
-  // ---------- list ----------
-
   const remove = (i: number) => onUpdate(ayahs.filter((_, idx) => idx !== i));
 
   const duplicate = (index: number) => {
@@ -266,6 +257,47 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
     onUpdate(list);
     setExpanded(index + 1);
     onSeek?.(newStart);
+  };
+
+  // Inserts a Bismillah or Isti'adhah text segment at the very start of the
+  // timeline WITHOUT touching any existing ayah's timing. It fits into
+  // whatever gap exists before the first ayah (up to 3s); if there's no gap,
+  // it's inserted with a small default length and you can drag/resize it
+  // into place yourself — nothing else on the timeline moves.
+  const insertIntroSegment = (kind: 'bismillah' | 'istiadhah') => {
+    const firstAyahStart = ayahs.length > 0 ? ayahs[0].startTime : safeDuration;
+    const availableGap = Math.max(0, firstAyahStart);
+    const insertDuration = availableGap > 0.3 ? Math.min(3, availableGap) : 1;
+
+    const introSegment: MatchedAyah = kind === 'bismillah'
+      ? {
+        surah: null,
+        surahName: null,
+        surahEnglishName: null,
+        ayahNumber: null,
+        arabic: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ',
+        translation: 'In the name of Allah, the Most Gracious, the Most Merciful',
+        isFullAyah: false,
+        isBismillah: true,
+        startTime: 0,
+        endTime: insertDuration,
+      }
+      : {
+        surah: null,
+        surahName: null,
+        surahEnglishName: null,
+        ayahNumber: null,
+        arabic: 'أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ',
+        translation: 'I seek refuge in Allah from Satan, the accursed',
+        isFullAyah: false,
+        isIstiadhah: true,
+        startTime: 0,
+        endTime: insertDuration,
+      };
+
+    onUpdate([introSegment, ...ayahs]);
+    setExpanded(0);
+    onSeek?.(0);
   };
 
   const updateField = (index: number, field: keyof MatchedAyah, value: unknown) => {
@@ -330,28 +362,45 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
       <style>{`
         .ayah-scroll {
           scrollbar-width: thin;
-          scrollbar-color: #3f3f46 transparent;
+          scrollbar-color: #d4d4d8 transparent;
         }
         .ayah-scroll::-webkit-scrollbar {
-          width: 6px;
-          height: 6px;
+          width: 5px;
+          height: 5px;
         }
         .ayah-scroll::-webkit-scrollbar-track {
           background: transparent;
         }
         .ayah-scroll::-webkit-scrollbar-thumb {
-          background-color: #3f3f46;
+          background-color: #d4d4d8;
           border-radius: 9999px;
         }
-        .ayah-scroll::-webkit-scrollbar-thumb:hover {
-          background-color: #52525b;
-        }
       `}</style>
+
+      {/* Insert intro segment buttons */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => insertIntroSegment('istiadhah')}
+          className="px-2.5 py-1.5 text-[11px] font-medium rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 transition-colors cursor-pointer"
+          title="Insert Isti'adhah (A'udhu billah) at the start"
+        >
+          + Isti&apos;adhah
+        </button>
+        <button
+          onClick={() => insertIntroSegment('bismillah')}
+          className="px-2.5 py-1.5 text-[11px] font-medium rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 transition-colors cursor-pointer"
+          title="Insert Bismillah at the start"
+        >
+          + Bismillah
+        </button>
+      </div>
+
       {/* Toolbar */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-4 text-xs text-gray-400 font-medium">
           <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#10b981' }} /> Matched ayah</span>
           <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#f59e0b' }} /> Bismillah</span>
+          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#8b5cf6' }} /> Isti&apos;adhah</span>
           <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: '#71717a' }} /> Unmatched</span>
         </div>
         <div className="flex items-center gap-2 text-xs text-gray-400 font-medium">
@@ -395,7 +444,6 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
             onClick={handleTrackClick}
             className="relative h-24 cursor-pointer"
           >
-            {/* faint vertical gridlines aligned to ruler ticks */}
             {ticks.map((t) => (
               <div
                 key={t}
@@ -410,9 +458,11 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
               const isSelected = expanded === i;
               const label = ayah.isBismillah
                 ? 'Bismillah'
-                : (ayah.ayahNumber !== null && ayah.isFullAyah)
-                  ? `${ayah.surah}:${ayah.ayahNumber}`
-                  : '?';
+                : ayah.isIstiadhah
+                  ? "Isti'adhah"
+                  : (ayah.ayahNumber !== null && ayah.isFullAyah)
+                    ? `${ayah.surah}:${ayah.ayahNumber}`
+                    : '?';
 
               return (
                 <div
@@ -431,17 +481,16 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
                   }}
                   title={`${ayah.surahEnglishName || ''} ${label} · ${formatTime(ayah.startTime)}–${formatTime(ayah.endTime)}`}
                 >
-                  <span className="text-sm font-bold text-white/95 truncate pointer-events-none leading-tight">
+                  <span className="text-[11px] font-bold text-white/95 truncate pointer-events-none leading-tight">
                     {label}
                     {ayah.style && Object.keys(ayah.style).length > 0 && (
                       <span className="ml-1 opacity-80" title="Custom appearance">✦</span>
                     )}
                   </span>
-                  <span className="text-[10px] text-white/80 font-mono truncate pointer-events-none leading-tight">
+                  <span className="text-[9px] text-white/80 font-mono truncate pointer-events-none leading-tight">
                     {formatTime(ayah.startTime)}–{formatTime(ayah.endTime)}
                   </span>
 
-                  {/* Resize handles — big, obvious grab strips */}
                   <div
                     onPointerDown={startResize(i, 'start')}
                     className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-black/10 flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"
@@ -458,7 +507,6 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
               );
             })}
 
-            {/* Magnetic snap guide — CapCut-style pink line that appears when close to a snap target */}
             {snapGuidePct !== null && (
               <div
                 className="absolute top-0 bottom-0 w-0.5 bg-pink-500 pointer-events-none z-30 shadow-[0_0_8px_rgba(236,72,153,0.9)]"
@@ -468,7 +516,6 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
               </div>
             )}
 
-            {/* Playhead */}
             <div
               className="absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none z-20 shadow-[0_0_6px_rgba(239,68,68,0.8)]"
               style={{ left: `${playheadPct}%` }}
@@ -503,7 +550,7 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
                 {ayah.ayahNumber ?? '?'}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs text-zinc-800 font-semibold truncate">{ayah.surahEnglishName || (ayah.isBismillah ? 'Bismillah' : 'Unmatched')}</p>
+                <p className="text-xs text-zinc-800 font-semibold truncate">{ayah.surahEnglishName || (ayah.isBismillah ? 'Bismillah' : ayah.isIstiadhah ? "Isti'adhah" : 'Unmatched')}</p>
                 <p className="text-[10px] text-zinc-500">{formatTime(ayah.startTime)} – {formatTime(ayah.endTime)}</p>
               </div>
               <p
@@ -538,205 +585,204 @@ export default function AyahTimeline({ ayahs, onUpdate, duration = 0, currentTim
                 );
 
               return (
-              <div className="px-3 pb-3 border-t border-zinc-150 pt-3 space-y-4 bg-zinc-50/50">
-                {/* Text */}
-                <div className="space-y-2">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Text</p>
-                  <div className="space-y-1">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[10px] text-zinc-500 font-medium">Arabic</label>
-                      <button
-                        onClick={() => handleDetect(i)}
-                        disabled={detecting !== null}
-                        className="text-[10px] text-emerald-600 hover:text-emerald-700 disabled:text-zinc-400 font-semibold transition-colors cursor-pointer"
-                      >
-                        {detecting === i ? 'Detecting…' : 'Re-match ayah'}
-                      </button>
-                    </div>
-                    <textarea
-                      value={ayah.arabic}
-                      onChange={(e) => updateField(i, 'arabic', e.target.value)}
-                      className="w-full bg-white text-zinc-900 font-medium border border-zinc-200 rounded-lg p-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all leading-relaxed shadow-inner"
-                      style={{ fontFamily: '"Scheherazade New", serif', direction: 'rtl' }}
-                      rows={2}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-zinc-500 font-medium block">Translation</label>
-                    <textarea
-                      value={ayah.translation}
-                      onChange={(e) => updateField(i, 'translation', e.target.value)}
-                      className="w-full bg-white text-zinc-900 border border-zinc-200 rounded-lg p-2 text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all leading-relaxed shadow-inner"
-                      rows={2}
-                    />
-                  </div>
-                </div>
-
-                {/* Timing */}
-                <div className="space-y-2 pt-1 border-t border-zinc-200/80">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Timing</p>
-                  <div className="grid grid-cols-2 gap-3">
+                <div className="px-3 pb-3 border-t border-zinc-150 pt-3 space-y-4 bg-zinc-50/50">
+                  {/* Text */}
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Text</p>
                     <div className="space-y-1">
-                      <label className="text-[10px] text-zinc-500 font-medium block">Start (sec)</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        value={ayah.startTime}
-                        onChange={(e) => updateField(i, 'startTime', parseFloat(e.target.value) || 0)}
-                        className="w-full bg-white text-zinc-950 font-mono font-medium border border-zinc-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-inner"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] text-zinc-500 font-medium block">End (sec)</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        value={ayah.endTime}
-                        onChange={(e) => updateField(i, 'endTime', parseFloat(e.target.value) || 0)}
-                        className="w-full bg-white text-zinc-950 font-mono font-medium border border-zinc-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-inner"
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onSeek?.(ayah.startTime)}
-                    className="text-[10px] text-emerald-700 hover:underline font-medium"
-                  >
-                    Jump to this segment in preview
-                  </button>
-                </div>
-
-                {/* Appearance — per-segment overrides */}
-                <div className="space-y-3 pt-1 border-t border-zinc-200/80">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Appearance</p>
-                    {ayah.style && (
-                      <button
-                        type="button"
-                        onClick={() => clearStyle(i)}
-                        className="text-[10px] text-zinc-500 hover:text-emerald-700 font-medium"
-                      >
-                        Reset to global
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-zinc-500 font-medium block">Entrance animation</label>
-                    <div className="grid grid-cols-2 gap-1">
-                      {TEXT_ANIMATION_OPTIONS.map((opt) => (
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] text-zinc-500 font-medium">Arabic</label>
                         <button
-                          key={opt.value}
+                          onClick={() => handleDetect(i)}
+                          disabled={detecting !== null}
+                          className="text-[10px] text-emerald-600 hover:text-emerald-700 disabled:text-zinc-400 font-semibold transition-colors cursor-pointer"
+                        >
+                          {detecting === i ? 'Detecting…' : 'Re-match ayah'}
+                        </button>
+                      </div>
+                      <textarea
+                        value={ayah.arabic}
+                        onChange={(e) => updateField(i, 'arabic', e.target.value)}
+                        className="w-full bg-white text-zinc-900 font-medium border border-zinc-200 rounded-lg p-2 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all leading-relaxed shadow-inner"
+                        style={{ fontFamily: '"Scheherazade New", serif', direction: 'rtl' }}
+                        rows={2}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-zinc-500 font-medium block">Translation</label>
+                      <textarea
+                        value={ayah.translation}
+                        onChange={(e) => updateField(i, 'translation', e.target.value)}
+                        className="w-full bg-white text-zinc-900 border border-zinc-200 rounded-lg p-2 text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all leading-relaxed shadow-inner"
+                        rows={2}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Timing */}
+                  <div className="space-y-2 pt-1 border-t border-zinc-200/80">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Timing</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-zinc-500 font-medium block">Start (sec)</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          value={ayah.startTime}
+                          onChange={(e) => updateField(i, 'startTime', parseFloat(e.target.value) || 0)}
+                          className="w-full bg-white text-zinc-950 font-mono font-medium border border-zinc-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-inner"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-zinc-500 font-medium block">End (sec)</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          value={ayah.endTime}
+                          onChange={(e) => updateField(i, 'endTime', parseFloat(e.target.value) || 0)}
+                          className="w-full bg-white text-zinc-950 font-mono font-medium border border-zinc-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all shadow-inner"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onSeek?.(ayah.startTime)}
+                      className="text-[10px] text-emerald-700 hover:underline font-medium"
+                    >
+                      Jump to this segment in preview
+                    </button>
+                  </div>
+
+                  {/* Appearance — per-segment overrides */}
+                  <div className="space-y-3 pt-1 border-t border-zinc-200/80">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Appearance</p>
+                      {ayah.style && (
+                        <button
                           type="button"
-                          onClick={() => {
-                            if (opt.value === globalTextStyle.textAnimation) {
-                              updateStyle(i, { textAnimation: undefined });
-                            } else {
-                              updateStyle(i, { textAnimation: opt.value });
-                            }
-                          }}
-                          className={`px-2 py-1 rounded text-[10px] transition-colors ${
-                            resolved.textAnimation === opt.value
+                          onClick={() => clearStyle(i)}
+                          className="text-[10px] text-zinc-500 hover:text-emerald-700 font-medium"
+                        >
+                          Reset to global
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] text-zinc-500 font-medium block">Entrance animation</label>
+                      <div className="grid grid-cols-2 gap-1">
+                        {TEXT_ANIMATION_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => {
+                              if (opt.value === globalTextStyle.textAnimation) {
+                                updateStyle(i, { textAnimation: undefined });
+                              } else {
+                                updateStyle(i, { textAnimation: opt.value });
+                              }
+                            }}
+                            className={`px-2 py-1 rounded text-[10px] transition-colors ${resolved.textAnimation === opt.value
                               ? 'bg-emerald-700 text-white'
                               : 'bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50'
-                          }`}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
+                              }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
 
-                  {([
-                    ['arabicFontSize', 'Arabic font size', 16, 80, 1, 'px'] as const,
-                    ['englishFontSize', 'English font size', 12, 60, 1, 'px'] as const,
-                    ['arabicLineHeight', 'Arabic line height', 1, 3, 0.05, ''] as const,
-                    ['englishLineHeight', 'English line height', 1, 3, 0.05, ''] as const,
-                    ['arabicPadding', 'Arabic padding', 0, 48, 1, 'px'] as const,
-                    ['englishPadding', 'English padding', 0, 48, 1, 'px'] as const,
-                  ]).map(([field, label, min, max, step, suffix]) => {
-                    const globalVal = globalTextStyle[field];
-                    const val = resolved[field];
-                    const isCustom = hasStyleOverride(ayah.style, field);
-                    return (
-                      <div key={field} className="space-y-1">
-                        <div className="flex justify-between items-center gap-2">
-                          <label className="text-[10px] text-zinc-500 font-medium">{label}</label>
-                          <div className="flex items-center gap-2">
-                            {customBadge(field)}
-                            <span className="text-[10px] font-mono text-zinc-600">
-                              {suffix === 'px' ? `${val}px` : val.toFixed(2)}
-                            </span>
+                    {([
+                      ['arabicFontSize', 'Arabic font size', 16, 80, 1, 'px'] as const,
+                      ['englishFontSize', 'English font size', 12, 60, 1, 'px'] as const,
+                      ['arabicLineHeight', 'Arabic line height', 1, 3, 0.05, ''] as const,
+                      ['englishLineHeight', 'English line height', 1, 3, 0.05, ''] as const,
+                      ['arabicPadding', 'Arabic padding', 0, 48, 1, 'px'] as const,
+                      ['englishPadding', 'English padding', 0, 48, 1, 'px'] as const,
+                    ]).map(([field, label, min, max, step, suffix]) => {
+                      const globalVal = globalTextStyle[field];
+                      const val = resolved[field];
+                      const isCustom = hasStyleOverride(ayah.style, field);
+                      return (
+                        <div key={field} className="space-y-1">
+                          <div className="flex justify-between items-center gap-2">
+                            <label className="text-[10px] text-zinc-500 font-medium">{label}</label>
+                            <div className="flex items-center gap-2">
+                              {customBadge(field)}
+                              <span className="text-[10px] font-mono text-zinc-600">
+                                {suffix === 'px' ? `${val}px` : val.toFixed(2)}
+                              </span>
+                            </div>
                           </div>
+                          <input
+                            type="range"
+                            min={min}
+                            max={max}
+                            step={step}
+                            value={val}
+                            onChange={(e) => {
+                              const num = step < 1 ? parseFloat(e.target.value) : parseInt(e.target.value);
+                              if (num === globalVal) {
+                                updateStyle(i, { [field]: undefined });
+                              } else {
+                                updateStyle(i, { [field]: num });
+                              }
+                            }}
+                            className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                          />
+                          {isCustom && (
+                            <button
+                              type="button"
+                              onClick={() => updateStyle(i, { [field]: undefined })}
+                              className="text-[9px] text-zinc-400 hover:text-emerald-600"
+                            >
+                              Use global ({suffix === 'px' ? `${globalVal}px` : globalVal.toFixed(2)})
+                            </button>
+                          )}
                         </div>
+                      );
+                    })}
+
+                    <div className="flex items-center justify-between pt-1">
+                      <label className="text-[10px] text-zinc-500 font-medium">Segment text color</label>
+                      <div className="flex items-center gap-2">
+                        {customBadge('textColor')}
                         <input
-                          type="range"
-                          min={min}
-                          max={max}
-                          step={step}
-                          value={val}
+                          type="color"
+                          value={resolved.textColor}
                           onChange={(e) => {
-                            const num = step < 1 ? parseFloat(e.target.value) : parseInt(e.target.value);
-                            if (num === globalVal) {
-                              updateStyle(i, { [field]: undefined });
+                            if (e.target.value === globalTextStyle.textColor) {
+                              updateStyle(i, { textColor: undefined });
                             } else {
-                              updateStyle(i, { [field]: num });
+                              updateStyle(i, { textColor: e.target.value });
                             }
                           }}
-                          className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                          className="w-7 h-7 rounded cursor-pointer border border-zinc-200 bg-transparent"
                         />
-                        {isCustom && (
-                          <button
-                            type="button"
-                            onClick={() => updateStyle(i, { [field]: undefined })}
-                            className="text-[9px] text-zinc-400 hover:text-emerald-600"
-                          >
-                            Use global ({suffix === 'px' ? `${globalVal}px` : globalVal.toFixed(2)})
-                          </button>
-                        )}
                       </div>
-                    );
-                  })}
-
-                  <div className="flex items-center justify-between pt-1">
-                    <label className="text-[10px] text-zinc-500 font-medium">Segment text color</label>
-                    <div className="flex items-center gap-2">
-                      {customBadge('textColor')}
-                      <input
-                        type="color"
-                        value={resolved.textColor}
-                        onChange={(e) => {
-                          if (e.target.value === globalTextStyle.textColor) {
-                            updateStyle(i, { textColor: undefined });
-                          } else {
-                            updateStyle(i, { textColor: e.target.value });
-                          }
-                        }}
-                        className="w-7 h-7 rounded cursor-pointer border border-zinc-200 bg-transparent"
-                      />
                     </div>
                   </div>
-                </div>
 
-                <div className="flex gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => duplicate(i)}
-                    className="flex-1 py-2 text-xs font-semibold rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 transition-colors"
-                  >
-                    Duplicate segment
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => remove(i)}
-                    className="px-4 py-2 text-xs font-semibold rounded-lg border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
-                  >
-                    Delete
-                  </button>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => duplicate(i)}
+                      className="flex-1 py-2 text-xs font-semibold rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 transition-colors"
+                    >
+                      Duplicate segment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => remove(i)}
+                      className="px-4 py-2 text-xs font-semibold rounded-lg border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
-              </div>
               );
             })()}
           </div>

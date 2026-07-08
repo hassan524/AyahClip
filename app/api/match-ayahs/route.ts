@@ -63,46 +63,69 @@ function spokenWordCount(officialWord: string): number {
 // the AI. Short/medium ayahs are always shown whole.
 const LONG_AYAH_WORD_THRESHOLD = 12;
 
-async function fetchOfficialAyahData(surah: number, ayah: number): Promise<OfficialAyahData | null> {
-  try {
-    const [arabicRes, transRes] = await Promise.all([
-      fetch(`https://api.alquran.cloud/v1/ayah/${surah}:${ayah}/quran-uthmani`),
-      fetch(`https://api.alquran.cloud/v1/ayah/${surah}:${ayah}/en.sahih`),
-    ]);
+async function fetchOfficialAyahData(
+  surah: number,
+  ayah: number,
+  maxRetries = 3
+): Promise<OfficialAyahData | null> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const [arabicRes, transRes] = await Promise.all([
+        fetch(`https://api.alquran.cloud/v1/ayah/${surah}:${ayah}/quran-uthmani`),
+        fetch(`https://api.alquran.cloud/v1/ayah/${surah}:${ayah}/en.sahih`),
+      ]);
 
-    if (!arabicRes.ok || !transRes.ok) return null;
+      // A real 404 means this ayah genuinely doesn't exist (end of surah) —
+      // stop immediately, don't waste retries on it.
+      if (arabicRes.status === 404 || transRes.status === 404) return null;
 
-    const arabicData = await arabicRes.json();
-    const transData = await transRes.json();
-
-    let arabicWords = splitByWhitespace(arabicData.data.text);
-    arabicWords = arabicWords.filter((w) => stripDiacritics(w).length > 0);
-
-    if (ayah === 1 && surah !== 1 && surah !== 9 && arabicWords.length > BISMILLAH_SKELETON.length) {
-      const openingSkeleton = arabicWords.slice(0, 4).map(normalizeForCompare);
-      const isBismillah = openingSkeleton.every((w, i) => w === BISMILLAH_SKELETON[i]);
-      if (isBismillah) {
-        arabicWords = arabicWords.slice(4);
-      } else {
-        let stripCount = 0;
-        for (let i = 0; i < Math.min(4, arabicWords.length); i++) {
-          if (normalizeForCompare(arabicWords[i]) === BISMILLAH_SKELETON[i]) stripCount++;
-          else break;
+      // Any other non-ok status (rate limit, timeout, 5xx) is likely
+      // transient — retry instead of silently ending the whole ayah loop.
+      if (!arabicRes.ok || !transRes.ok) {
+        if (attempt < maxRetries) {
+          await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+          continue;
         }
-        if (stripCount === 4) arabicWords = arabicWords.slice(4);
+        return null;
       }
-    }
 
-    return {
-      arabicWords,
-      translation: transData.data.text,
-      surahName: arabicData.data.surah.name,
-      surahEnglishName: arabicData.data.surah.englishName,
-    };
-  } catch (err) {
-    console.error(`Official ayah fetch failed for ${surah}:${ayah}`, err);
-    return null;
+      const arabicData = await arabicRes.json();
+      const transData = await transRes.json();
+
+      let arabicWords = splitByWhitespace(arabicData.data.text);
+      arabicWords = arabicWords.filter((w) => stripDiacritics(w).length > 0);
+
+      if (ayah === 1 && surah !== 1 && surah !== 9 && arabicWords.length > BISMILLAH_SKELETON.length) {
+        const openingSkeleton = arabicWords.slice(0, 4).map(normalizeForCompare);
+        const isBismillah = openingSkeleton.every((w, i) => w === BISMILLAH_SKELETON[i]);
+        if (isBismillah) {
+          arabicWords = arabicWords.slice(4);
+        } else {
+          let stripCount = 0;
+          for (let i = 0; i < Math.min(4, arabicWords.length); i++) {
+            if (normalizeForCompare(arabicWords[i]) === BISMILLAH_SKELETON[i]) stripCount++;
+            else break;
+          }
+          if (stripCount === 4) arabicWords = arabicWords.slice(4);
+        }
+      }
+
+      return {
+        arabicWords,
+        translation: transData.data.text,
+        surahName: arabicData.data.surah.name,
+        surahEnglishName: arabicData.data.surah.englishName,
+      };
+    } catch (err) {
+      console.error(`Official ayah fetch failed for ${surah}:${ayah} (attempt ${attempt + 1}/${maxRetries + 1})`, err);
+      if (attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+        continue;
+      }
+      return null;
+    }
   }
+  return null;
 }
 
 function splitMuqattaatTranslation(translation: string): [string, string] {

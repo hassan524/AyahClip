@@ -42,6 +42,7 @@ export interface MatchedAyah {
   translation: string;
   isFullAyah: boolean;
   isBismillah?: boolean;
+  isIstiadhah?: boolean;
   isChunk?: boolean;
   chunkIndex?: number;
   totalChunks?: number;
@@ -144,8 +145,8 @@ export default function Home() {
   const [textColor, setTextColor] = useState('#ffffff');
   const [overlayOpacity, setOverlayOpacity] = useState(0);
   const [verticalPosition, setVerticalPosition] = useState<'center' | 'bottom'>('center');
-  const [arabicFontSize, setArabicFontSize] = useState(27);
-  const [englishFontSize, setEnglishFontSize] = useState(20);
+  const [arabicFontSize, setArabicFontSize] = useState(20);
+  const [englishFontSize, setEnglishFontSize] = useState(18);
   const [textAnimation, setTextAnimation] = useState<TextAnimation>('fade');
   const [arabicLineHeight, setArabicLineHeight] = useState(1.75);
   const [englishLineHeight, setEnglishLineHeight] = useState(1.6);
@@ -369,22 +370,6 @@ export default function Home() {
    * stitches the audio together with exact timestamps, and drops the
    * user straight into the edit step — same as upload/record.
    */
-  // function trimSilence(buffer: AudioBuffer, audioCtx: BaseAudioContext, threshold = 0.012): AudioBuffer {
-  //   const data = buffer.getChannelData(0);
-  //   let start = 0;
-  //   let end = data.length - 1;
-  //   while (start < end && Math.abs(data[start]) < threshold) start++;
-  //   while (end > start && Math.abs(data[end]) < threshold) end--;
-
-  //   const trimmedLength = end - start + 1;
-  //   if (trimmedLength <= 0) return buffer;
-
-  //   const trimmed = audioCtx.createBuffer(1, trimmedLength, buffer.sampleRate);
-  //   const trimmedData = trimmed.getChannelData(0);
-  //   for (let i = 0; i < trimmedLength; i++) trimmedData[i] = data[start + i];
-  //   return trimmed;
-  // }
-
   function splitByWords(text: string): string[] {
     return text.trim().split(/\s+/).filter(Boolean);
   }
@@ -506,9 +491,6 @@ export default function Home() {
 
     return chunks;
   }
-
-
-
 
   const handleCreateFromVerse = useCallback(
     async (config: {
@@ -639,9 +621,6 @@ export default function Home() {
 
           const chunkCount = arabicChunks.length;
 
-          // Weight each chunk's time slice by character count instead of
-          // splitting time evenly — chunks vary a lot in length, so equal
-          // splits drift out of sync on long ayahs.
           const chunkWeights = arabicChunks.map((c) =>
             Math.max(1, splitByWords(c).reduce((sum, w) => sum + w.length, 0)),
           );
@@ -1343,7 +1322,7 @@ export default function Home() {
             <br />
             <br />
             Email:{' '}
-            <a
+            <a 
               href="mailto:hassanrehan9975@gmail.com"
               className="text-emerald-700 hover:underline"
             >

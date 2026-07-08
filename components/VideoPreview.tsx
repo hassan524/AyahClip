@@ -12,11 +12,9 @@ import {
 // TYPES
 // ============================================================
 
-// x/y are percentages (0-100) relative to the video container.
-// This is how we store "where the user dragged the text block to".
 export interface TextPosition {
-  x: number; // horizontal center of the text block, in % of container width
-  y: number; // vertical center of the text block, in % of container height
+  x: number;
+  y: number;
 }
 
 export type AspectRatio = '16:9' | '9:16' | '1:1' | '4:5';
@@ -38,37 +36,26 @@ interface Props {
   englishFont: string;
   arabicAlign: 'center' | 'right';
   englishAlign: 'center' | 'left';
-  verticalPosition: 'center' | 'bottom'; // used only to compute DEFAULT text position
+  verticalPosition: 'center' | 'bottom';
   arabicFontSize: number;
   englishFontSize: number;
   wordHighlight?: boolean;
   onTimeUpdate?: (time: number) => void;
   seekTo?: { time: number; token: number } | null;
-
-  // ---- Format / layout controls ----
   aspectRatio?: AspectRatio;
-
-  // ---- Motion & spacing (global defaults; per-ayah overrides live on MatchedAyah.style) ----
   textAnimation?: TextAnimation;
   arabicLineHeight?: number;
   englishLineHeight?: number;
   arabicPadding?: number;
   englishPadding?: number;
-
-  // ---- Draggable text positions ----
-  // If null, we fall back to a computed default position (based on verticalPosition).
-  // Parent (page.tsx) owns this state so it can be reset / persisted.
   arabicPosition?: TextPosition | null;
   englishPosition?: TextPosition | null;
   onArabicPositionChange?: (pos: TextPosition) => void;
   onEnglishPositionChange?: (pos: TextPosition) => void;
-
-  // ---- Surah name label ----
   showSurahLabel?: boolean;
   surahLabelLang?: SurahLabelLang;
 }
 
-// Maps our aspect ratio option to actual CSS `aspect-ratio` values.
 const ASPECT_RATIO_CSS: Record<AspectRatio, string> = {
   '16:9': '16 / 9',
   '9:16': '9 / 16',
@@ -76,8 +63,6 @@ const ASPECT_RATIO_CSS: Record<AspectRatio, string> = {
   '4:5': '4 / 5',
 };
 
-// Controls how wide the preview container is allowed to get for each ratio,
-// so a 9:16 portrait preview doesn't stretch full-width and look silly on desktop.
 const ASPECT_CONTAINER_CLASS: Record<AspectRatio, string> = {
   '16:9': 'w-full',
   '1:1': 'w-full max-w-2xl mx-auto',
@@ -85,9 +70,24 @@ const ASPECT_CONTAINER_CLASS: Record<AspectRatio, string> = {
   '4:5': 'w-full max-w-md mx-auto',
 };
 
-// How close (in %) a dragged block needs to be to the exact center (50%)
-// before it "snaps" to it. Same concept as CapCut/InShot alignment guides.
 const SNAP_THRESHOLD = 3;
+
+// Picks a shadow color that stays readable against the chosen text color,
+// instead of a hardcoded black shadow that disappears (or looks like a smudge)
+// whenever the text itself is dark/black on a light background.
+function getAdaptiveShadow(hexColor: string): string {
+  const clean = hexColor.replace('#', '');
+  const r = parseInt(clean.substring(0, 2), 16) || 0;
+  const g = parseInt(clean.substring(2, 4), 16) || 0;
+  const b = parseInt(clean.substring(4, 6), 16) || 0;
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+  // Light text (white/near-white) -> dark shadow for contrast on any background.
+  // Dark text (black/near-black) -> soft light shadow instead of invisible black-on-black.
+  return luminance > 0.6
+    ? '0 2px 8px rgba(0,0,0,0.85)'
+    : '0 1px 4px rgba(255,255,255,0.5)';
+}
 
 export default function VideoPreview({
   videoUrl, isAudioOnly = false, ayahs, background, textColor, showTranslation, duration,
@@ -107,18 +107,12 @@ export default function VideoPreview({
   showSurahLabel = true,
   surahLabelLang = 'english',
 }: Props) {
-  // ============================================================
-  // REFS — DOM elements we need direct access to
-  // ============================================================
-  const videoRef = useRef<HTMLVideoElement>(null);       // the actual recitation video
-  const bgVideoRef = useRef<HTMLVideoElement>(null);      // looping background video (if background.type === 'video')
-  const containerRef = useRef<HTMLDivElement>(null);      // the video frame container — used to convert mouse px -> %
-  const arabicElRef = useRef<HTMLDivElement>(null);       // the Arabic text block DOM node (for direct style writes while dragging)
-  const englishElRef = useRef<HTMLDivElement>(null);      // the English/translation text block DOM node
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const bgVideoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const arabicElRef = useRef<HTMLDivElement>(null);
+  const englishElRef = useRef<HTMLDivElement>(null);
 
-  // ============================================================
-  // PLAYBACK STATE
-  // ============================================================
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -129,35 +123,21 @@ export default function VideoPreview({
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSeekTokenRef = useRef<number | null>(null);
 
-  // ============================================================
-  // DRAG STATE
-  // ============================================================
-  // IMPORTANT PERFORMANCE NOTE:
-  // We do NOT call setState (React re-render) on every pointermove.
-  // Instead we mutate the DOM element's style directly (via refs) while dragging,
-  // and only commit the final position to React/parent state on pointerup.
-  // This is why dragging feels smooth — no re-render of the whole editor
-  // (timeline, settings panel, etc.) happens mid-drag.
   const dragRef = useRef<{
     target: 'arabic' | 'english';
-    origX: number;          // where the block started (%), before this drag
+    origX: number;
     origY: number;
-    startClientX: number;   // mouse position (px) when drag started
+    startClientX: number;
     startClientY: number;
-    liveX: number;          // continuously updated current position (%) during drag
+    liveX: number;
     liveY: number;
   } | null>(null);
 
   const [draggingTarget, setDraggingTarget] = useState<'arabic' | 'english' | null>(null);
   const [snapGuides, setSnapGuides] = useState<{ x: boolean; y: boolean }>({ x: false, y: false });
 
-  // Tracks whether the pointer actually moved during a press.
-  // Used to stop a drag-release from also triggering "click to play/pause".
   const hasDraggedRef = useRef(false);
 
-  // ============================================================
-  // CONTROLS AUTO-HIDE (unchanged behavior — hides controls after 3s of no mouse movement while playing)
-  // ============================================================
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
     controlsTimerRef.current && clearTimeout(controlsTimerRef.current);
@@ -177,9 +157,6 @@ export default function VideoPreview({
     }
   }, [playing]);
 
-  // ============================================================
-  // PLAYBACK TIME TRACKING (rAF loop while playing, so the playhead/text stay in sync)
-  // ============================================================
   const tick = useCallback(() => {
     const video = videoRef.current;
     if (video && !video.paused && !video.ended) {
@@ -217,10 +194,9 @@ export default function VideoPreview({
     };
   }, [tick, onTimeUpdate]);
 
-  // Responds to seek requests coming from AyahTimeline (clicking the timeline ruler, etc.)
   useEffect(() => {
     if (!seekTo) return;
-    if (lastSeekTokenRef.current === seekTo.token) return; // avoid re-seeking to the same token twice
+    if (lastSeekTokenRef.current === seekTo.token) return;
     lastSeekTokenRef.current = seekTo.token;
     const v = videoRef.current;
     if (!v) return;
@@ -229,9 +205,6 @@ export default function VideoPreview({
     onTimeUpdate?.(seekTo.time);
   }, [seekTo, onTimeUpdate]);
 
-  // ============================================================
-  // FIND WHICH AYAH IS CURRENTLY BEING RECITED AT `currentTime`
-  // ============================================================
   const currentAyah: MatchedAyah | null = (() => {
     if (ayahs.length === 0) return null;
     let current: MatchedAyah | null = null;
@@ -245,9 +218,6 @@ export default function VideoPreview({
     return current;
   })();
 
-  // ============================================================
-  // PLAYER CONTROL HANDLERS
-  // ============================================================
   const togglePlay = () => {
     const v = videoRef.current;
     if (!v) return;
@@ -282,30 +252,23 @@ export default function VideoPreview({
   const formatTime = (s: number) =>
     `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
-  // Converts a normal number (e.g. 12) into Arabic-Indic numerals (e.g. ١٢) for the ayah marker ۝
   const toArabicNumeral = (n: number | null): string => {
     if (n === null || n === undefined) return '';
     return n.toString().split('').map(d => String.fromCharCode(0x0660 + parseInt(d))).join('');
   };
 
-  // ============================================================
-  // RENDER ARABIC TEXT — with optional word-by-word karaoke highlight
-  // ============================================================
   const renderArabic = (ayah: MatchedAyah, color: string) => {
     const dbWords = ayah.arabic.split(/\s+/).filter(Boolean);
-    const wWords = ayah.words || []; // precise per-word timestamps, if we have them from transcription
+    const wWords = ayah.words || [];
 
-    // Highlight disabled — just render plain colored text
     if (!wordHighlight) {
       return (
-        <span style={{ color, textShadow: '0 2px 8px rgba(0,0,0,1)' }}>
+        <span style={{ color, textShadow: getAdaptiveShadow(color) }}>
           {ayah.arabic}
         </span>
       );
     }
 
-    // No per-word timestamps available — fake the highlight by evenly dividing
-    // the ayah's total duration across its word count (rough but still looks synced).
     if (wWords.length === 0) {
       const total = ayah.endTime - ayah.startTime;
       const elapsed = currentTime - ayah.startTime;
@@ -327,8 +290,8 @@ export default function VideoPreview({
                 opacity: i < activeIdx ? 1 : i === activeIdx ? 1 : 0.3,
                 textShadow:
                   i === activeIdx
-                    ? '0 0 18px rgba(52,211,153,0.8), 0 2px 8px rgba(0,0,0,1)'
-                    : '0 2px 8px rgba(0,0,0,1)',
+                    ? `0 0 18px rgba(52,211,153,0.8), ${getAdaptiveShadow(color)}`
+                    : getAdaptiveShadow(color),
                 transition: 'opacity 0.1s, color 0.1s',
               }}
             >
@@ -339,7 +302,6 @@ export default function VideoPreview({
       );
     }
 
-    // We DO have real per-word timestamps — highlight based on actual `currentTime`.
     return (
       <span>
         {dbWords.map((word, i) => {
@@ -357,8 +319,8 @@ export default function VideoPreview({
                 color: isActive ? '#34d399' : color,
                 opacity: isPast ? 1 : isActive ? 1 : 0.3,
                 textShadow: isActive
-                  ? '0 0 20px rgba(52,211,153,0.9), 0 2px 8px rgba(0,0,0,1)'
-                  : '0 2px 8px rgba(0,0,0,1)',
+                  ? `0 0 20px rgba(52,211,153,0.9), ${getAdaptiveShadow(color)}`
+                  : getAdaptiveShadow(color),
                 transform: isActive ? 'scale(1.05)' : 'scale(1)',
                 transition: 'opacity 0.08s, color 0.08s, transform 0.08s',
               }}
@@ -371,9 +333,6 @@ export default function VideoPreview({
     );
   };
 
-  // ============================================================
-  // BACKGROUND LAYER STYLING (color / gradient / image / video)
-  // ============================================================
   const getBackgroundStyle = (): React.CSSProperties => {
     switch (background.type) {
       case 'color': return { backgroundColor: background.value };
@@ -402,24 +361,12 @@ export default function VideoPreview({
 
   const renderColor = activeStyle.textColor;
 
-  // ============================================================
-  // DEFAULT TEXT POSITIONS
-  // ============================================================
-  // If the user hasn't dragged a text block yet (position is null), we compute
-  // a sensible default based on the `verticalPosition` setting ('bottom' or 'center').
-  // Once the user drags a block, its position is stored explicitly in parent state
-  // and this default is no longer used for that block.
   const defaultArabicPos: TextPosition = { x: 50, y: verticalPosition === 'center' ? 42 : 72 };
   const defaultEnglishPos: TextPosition = { x: 50, y: verticalPosition === 'center' ? 58 : 86 };
 
   const arabicPos = arabicPosition ?? defaultArabicPos;
   const englishPos = englishPosition ?? defaultEnglishPos;
 
-  // ============================================================
-  // DRAG LOGIC
-  // ============================================================
-
-  // Directly writes left/top onto the DOM node — bypasses React for smoothness.
   const applyTransform = (target: 'arabic' | 'english', xPct: number, yPct: number) => {
     const el = target === 'arabic' ? arabicElRef.current : englishElRef.current;
     if (el) {
@@ -428,10 +375,9 @@ export default function VideoPreview({
     }
   };
 
-  // Called when the user presses down on a text block to start dragging it.
   const startDrag = (target: 'arabic' | 'english') => (e: React.PointerEvent) => {
     e.preventDefault();
-    e.stopPropagation(); // don't let this bubble up to the container's play/pause click handler
+    e.stopPropagation();
     const pos = target === 'arabic' ? arabicPos : englishPos;
     dragRef.current = {
       target,
@@ -442,56 +388,40 @@ export default function VideoPreview({
       liveX: pos.x,
       liveY: pos.y,
     };
-    hasDraggedRef.current = false; // reset — will flip to true once real movement happens
-    setDraggingTarget(target);     // used only to show the dashed outline + enable snap-guide rendering
+    hasDraggedRef.current = false;
+    setDraggingTarget(target);
     window.addEventListener('pointermove', handleDragMove);
     window.addEventListener('pointerup', stopDrag);
   };
 
-  // Called continuously while the mouse/touch moves during a drag.
-  // Does NOT call setState for position — only writes to the DOM directly (fast).
   const handleDragMove = useCallback((e: PointerEvent) => {
     const drag = dragRef.current;
     const rect = containerRef.current?.getBoundingClientRect();
     if (!drag || !rect) return;
 
-    // Convert the mouse movement (in pixels) into a percentage of the container size,
-    // since our positions are stored as percentages (so they stay correct at any preview size).
     const deltaXPct = ((e.clientX - drag.startClientX) / rect.width) * 100;
     const deltaYPct = ((e.clientY - drag.startClientY) / rect.height) * 100;
 
-    // Mark that an actual drag happened (more than a tiny jitter) —
-    // this prevents a plain click from being misread as a drag, and vice versa.
     if (Math.abs(deltaXPct) > 0.3 || Math.abs(deltaYPct) > 0.3) {
       hasDraggedRef.current = true;
     }
 
-    // Clamp so text can't be dragged fully off-screen (keeps 4-96% range)
     let newX = Math.min(96, Math.max(4, drag.origX + deltaXPct));
     let newY = Math.min(96, Math.max(4, drag.origY + deltaYPct));
 
-    // SNAPPING: if we're within SNAP_THRESHOLD of dead-center (50%), lock to exactly 50%.
-    // This gives the "magnetic" feel apps like CapCut have.
     const snappedX = Math.abs(newX - 50) < SNAP_THRESHOLD;
     const snappedY = Math.abs(newY - 50) < SNAP_THRESHOLD;
     if (snappedX) newX = 50;
     if (snappedY) newY = 50;
 
-    // Keep track of the latest position so we can commit it on release
     drag.liveX = newX;
     drag.liveY = newY;
 
-    // Move the element directly — this is what makes dragging feel smooth,
-    // since it skips React's render cycle entirely during the drag.
     applyTransform(drag.target, newX, newY);
 
-    // Update snap-guide-line visibility (this IS a React state update, but it's cheap
-    // since it only re-renders two thin guide-line divs, not the whole editor)
     setSnapGuides({ x: snappedX, y: snappedY });
   }, []);
 
-  // Called on mouse-up / touch-end — this is where we finally commit the position
-  // to React state (and up to the parent), so it persists after the drag ends.
   const stopDrag = useCallback(() => {
     const drag = dragRef.current;
     if (drag) {
@@ -505,15 +435,11 @@ export default function VideoPreview({
     window.removeEventListener('pointerup', stopDrag);
   }, [handleDragMove, onArabicPositionChange, onEnglishPositionChange]);
 
-  // Cleanup listeners if the component unmounts mid-drag
   useEffect(() => () => {
     window.removeEventListener('pointermove', handleDragMove);
     window.removeEventListener('pointerup', stopDrag);
   }, [handleDragMove, stopDrag]);
 
-  // The video container normally toggles play/pause on click.
-  // But if the user just finished dragging a text block, that same mouse-up
-  // would otherwise ALSO toggle play/pause — this guard stops that from happening.
   const handleContainerClick = () => {
     if (hasDraggedRef.current) {
       hasDraggedRef.current = false;
@@ -522,12 +448,8 @@ export default function VideoPreview({
     togglePlay();
   };
 
-  // ============================================================
-  // LABELS
-  // ============================================================
   const progressPercent = duration ? (currentTime / duration) * 100 : 0;
 
-  // Small text shown bottom-right of the player controls bar
   const ayahLabel = currentAyah
     ? currentAyah.ayahNumber === 0
       ? 'Bismillah'
@@ -538,7 +460,6 @@ export default function VideoPreview({
           : 'Recitation'
     : 'Press play to preview';
 
-  // Surah name label that appears under the translation, in the language(s) the user picked
   const surahLabelText = (() => {
     if (!currentAyah || !showSurahLabel) return '';
     const ar = currentAyah.surahName || '';
@@ -553,23 +474,17 @@ export default function VideoPreview({
       if (!en) return '';
       return ayahNum ? `${en} · ${currentAyah.surah}:${ayahNum}` : en;
     }
-    // 'both'
     const parts = [en, ar].filter(Boolean);
     if (parts.length === 0) return '';
     return ayahNum ? `${parts.join(' · ')} · ${ayahNum}` : parts.join(' · ');
   })();
 
-  // Maps the chosen animation to a CSS class (keyframes defined in the <style> block below)
   const animClass = activeStyle.textAnimation === 'none'
     ? ''
     : `ayahclip-anim-${activeStyle.textAnimation}`;
 
-  // ============================================================
-  // RENDER
-  // ============================================================
   return (
     <div className="space-y-2">
-      {/* Keyframe definitions for the text entrance animations. Scoped locally via unique class names. */}
       <style>{`
         @keyframes ayahclip-fade-in { from { opacity: 0; } to { opacity: 1; } }
         @keyframes ayahclip-slide-up-in { from { opacity: 0; transform: translate(-50%, calc(-50% + 16px)); } to { opacity: 1; transform: translate(-50%, -50%); } }
@@ -579,7 +494,6 @@ export default function VideoPreview({
         .ayahclip-anim-scale { animation: ayahclip-scale-in 0.35s ease both; }
       `}</style>
 
-      {/* Outer wrapper controls how wide the preview can get, based on aspect ratio */}
       <div className={ASPECT_CONTAINER_CLASS[aspectRatio]}>
         <div
           ref={containerRef}
@@ -589,7 +503,6 @@ export default function VideoPreview({
           onMouseEnter={resetControlsTimer}
           onClick={handleContainerClick}
         >
-          {/* ---------- Background layer (color/gradient/image/video) ---------- */}
           <div className="absolute inset-0" style={getBackgroundStyle()}>
             {background.type === 'image' && (
               <div className="absolute inset-0 backdrop-blur-sm bg-black/30" />
@@ -604,9 +517,6 @@ export default function VideoPreview({
             )}
           </div>
 
-          {/* ---------- Main recitation video ----------
-              If background type is 'video' or it's audio-only, the recitation clip is hidden visually,
-              so the user's selected background color/gradient/image/video loop is visible underneath. */}
           {background.type === 'video' || isAudioOnly
             ? <video ref={videoRef} src={videoUrl} className="hidden" playsInline />
             : <video ref={videoRef} src={videoUrl}
@@ -614,7 +524,6 @@ export default function VideoPreview({
               style={{ opacity: videoOpacity }} playsInline />
           }
 
-          {/* ---------- Darkening overlays (to keep text readable) ---------- */}
           {overlayType === 'full' && (
             <div className="absolute inset-0 bg-black pointer-events-none" style={{ opacity: overlayOpacity }} />
           )}
@@ -623,8 +532,6 @@ export default function VideoPreview({
               style={{ background: `linear-gradient(to top, rgba(0,0,0,${overlayOpacity}) 0%, rgba(0,0,0,${overlayOpacity * 0.6}) 50%, transparent 100%)` }} />
           )}
 
-          {/* ---------- Snap guide lines ----------
-              Shown only while actively dragging AND currently snapped to center. */}
           {draggingTarget && snapGuides.x && (
             <div className="absolute top-0 bottom-0 left-1/2 w-px bg-emerald-400 pointer-events-none z-40 shadow-[0_0_6px_rgba(52,211,153,0.9)]" />
           )}
@@ -632,9 +539,6 @@ export default function VideoPreview({
             <div className="absolute left-0 right-0 top-1/2 h-px bg-emerald-400 pointer-events-none z-40 shadow-[0_0_6px_rgba(52,211,153,0.9)]" />
           )}
 
-          {/* ---------- Arabic text block (draggable) ----------
-              `key={ar-${currentAyah.startTime}}` forces React to remount this element
-              whenever the ayah changes, which re-triggers the entrance animation. */}
           {currentAyah && (
             <div
               key={`ar-${currentAyah.startTime}`}
@@ -644,10 +548,10 @@ export default function VideoPreview({
               style={{
                 left: `${arabicPos.x}%`,
                 top: `${arabicPos.y}%`,
-                transform: 'translate(-50%, -50%)', // position refers to the CENTER of the block
+                transform: 'translate(-50%, -50%)',
                 width: 'min(92%, 900px)',
                 padding: `${activeStyle.arabicPadding}px`,
-                touchAction: 'none', // required so touch-dragging doesn't scroll the page on mobile
+                touchAction: 'none',
                 outline: draggingTarget === 'arabic' ? '1px dashed rgba(255,255,255,0.6)' : 'none',
                 outlineOffset: '6px',
               }}
@@ -662,7 +566,6 @@ export default function VideoPreview({
               }}>
                 {renderArabic(currentAyah, renderColor)}
 
-                {/* Ayah-end marker ۝ with the ayah number inside it (only for full, numbered ayahs) */}
                 {currentAyah.isFullAyah && currentAyah.ayahNumber !== null && currentAyah.ayahNumber !== 0 && (
                   <span style={{
                     display: 'inline-block',
@@ -675,7 +578,7 @@ export default function VideoPreview({
                       fontSize: `${activeStyle.arabicFontSize * 1.1}px`,
                       color: renderColor,
                       opacity: 0.85,
-                      textShadow: `0 0 16px rgba(52,211,153,0.5), 0 2px 8px rgba(0,0,0,1)`,
+                      textShadow: `0 0 16px rgba(52,211,153,0.5), ${getAdaptiveShadow(renderColor)}`,
                       fontFamily: `"Scheherazade New", "Amiri", serif`,
                     }}>
                       ۝
@@ -700,9 +603,6 @@ export default function VideoPreview({
             </div>
           )}
 
-          {/* ---------- English text block (draggable) ----------
-              Contains the translation AND the surah-name label stacked together,
-              since they move together as one unit. */}
           {currentAyah && (showTranslation || surahLabelText) && (
             <div
               key={`en-${currentAyah.startTime}`}
@@ -727,7 +627,7 @@ export default function VideoPreview({
                   fontSize: `${activeStyle.englishFontSize}px`,
                   textAlign: englishAlign,
                   lineHeight: activeStyle.englishLineHeight,
-                  textShadow: '0 1px 6px rgba(0,0,0,0.95)',
+                  textShadow: getAdaptiveShadow(renderColor),
                   margin: 0,
                 }}>
                   {currentAyah.translation}
@@ -751,7 +651,6 @@ export default function VideoPreview({
             </div>
           )}
 
-          {/* ---------- Center play/pause icon (shown only when paused) ---------- */}
           {!playing && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="w-14 h-14 rounded-full bg-black/40 backdrop-blur-sm border border-white/20 flex items-center justify-center">
@@ -762,13 +661,11 @@ export default function VideoPreview({
             </div>
           )}
 
-          {/* ---------- Bottom controls bar (play/pause, volume, seek, time, ayah label) ---------- */}
           <div
             className={`absolute bottom-0 left-0 right-0 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}
             style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 100%)' }}
-            onClick={(e) => e.stopPropagation()} // don't let clicks inside the controls bar trigger play/pause on the container
+            onClick={(e) => e.stopPropagation()}
           >
-            {/* Seek bar */}
             <div className="px-3 pt-3 pb-1">
               <div className="relative h-1 group/seek">
                 <input
@@ -786,7 +683,6 @@ export default function VideoPreview({
               </div>
             </div>
 
-            {/* Playback buttons row */}
             <div className="flex items-center gap-3 px-3 pb-3 pt-1">
               <button onClick={togglePlay} className="text-white hover:text-emerald-400 transition-colors flex-shrink-0">
                 {playing
@@ -834,7 +730,6 @@ export default function VideoPreview({
         </div>
       </div>
 
-      {/* Small hint under the preview explaining the drag+snap behavior */}
       <p className="text-[11px] text-zinc-400 text-center">
         Drag the Arabic or translation text to reposition it. It snaps to center automatically.
       </p>
