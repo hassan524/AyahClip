@@ -57,6 +57,7 @@ export interface MatchedAyah {
 
 export type Step = 'upload' | 'processing' | 'edit' | 'export';
 export type Feature = 'create' | 'upload' | 'record';
+type RightPanelTab = 'ayahs' | 'settings';
 
 const ARABIC_FONTS = [
   'Scheherazade New', 'Amiri', 'Cairo', 'Noto Naskh Arabic',
@@ -140,6 +141,9 @@ export default function Home() {
   const [wordHighlight, setWordHighlight] = useState(false);
   const [quotesEnabled, setQuotesEnabled] = useState(true);
   const [isContactOpen, setIsContactOpen] = useState(false);
+
+  // ---- Right panel tab: switches between the Ayahs timeline and the Settings controls ----
+  const [rightTab, setRightTab] = useState<RightPanelTab>('ayahs');
 
   const [background, setBackground] = useState<BackgroundConfig>({ type: 'color', value: '#000000' });
   const [textColor, setTextColor] = useState('#ffffff');
@@ -724,6 +728,7 @@ export default function Home() {
     setArabicPosition(null);
     setEnglishPosition(null);
     setIsAudioOnly(false);
+    setRightTab('ayahs');
   };
 
   const scrollToUploader = () => {
@@ -917,11 +922,11 @@ export default function Home() {
           </div>
         )}
 
-        {/* Edit Step — side-by-side: video+timeline LEFT, settings RIGHT */}
+        {/* Edit Step — video on the LEFT, tabbed Ayahs/Settings panel on the RIGHT */}
         {step === 'edit' && videoUrl && (
           <div className="flex flex-col lg:flex-row gap-6">
-            {/* LEFT column — Video preview + Timeline (close together) */}
-            <div className="flex flex-col gap-2 lg:w-[55%] lg:sticky lg:top-24 lg:self-start">
+            {/* LEFT column — Video preview only, sticky on desktop */}
+            <div className="flex flex-col gap-4 lg:w-[55%] lg:sticky lg:top-24 lg:self-start">
               <VideoPreview
                 videoUrl={videoUrl}
                 isAudioOnly={isAudioOnly}
@@ -956,320 +961,356 @@ export default function Home() {
               />
 
               <div className="rounded-md border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-sm text-emerald-900">
-                <p className="font-medium">Check Arabic &amp; translation below</p>
+                <p className="font-medium">Edit ayahs &amp; appearance on the right</p>
                 <p className="text-emerald-800/80 text-xs mt-0.5 leading-relaxed">
-                  You can review the Arabic text and English translation for each ayah in the timeline below. Play the preview, open any segment, and fix wording or timing before exporting.
+                  Use the <span className="font-semibold">Ayahs</span> tab to fix timing, text, and per-ayah appearance.
+                  Use the <span className="font-semibold">Settings</span> tab for format, background, fonts, and layout.
                 </p>
-              </div>
-
-              {/* Timeline directly below video */}
-              <div className="bg-white rounded-md p-4 border border-zinc-200">
-                <h3 className="text-sm font-semibold mb-3 text-emerald-900 uppercase tracking-wide">
-                  Detected Ayahs ({ayahs.length})
-                </h3>
-                <AyahTimeline
-                  ayahs={ayahs}
-                  onUpdate={setAyahs}
-                  duration={videoDuration}
-                  currentTime={currentTime}
-                  onSeek={handleTimelineSeek}
-                  globalTextStyle={globalTextStyle}
-                />
               </div>
             </div>
 
-            {/* RIGHT column — All editing controls */}
-            <div className="lg:w-[45%] space-y-4">
-              <div className="bg-white rounded-md p-4 border border-zinc-200 space-y-4">
-                <h3 className="text-sm font-semibold text-emerald-900 uppercase tracking-wide">Format</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {ASPECT_RATIO_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.value}
-                      onClick={() => setAspectRatio(opt.value)}
-                      className={`px-3 py-2 rounded text-xs transition-colors ${aspectRatio === opt.value ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
+            {/* RIGHT column — Tabbed panel: Ayahs / Settings, fixed height + internal scroll on desktop */}
+            <div className="lg:w-[45%] flex flex-col lg:sticky lg:top-24 lg:self-start lg:h-[calc(100vh-7rem)]">
+              {/* Tab switcher */}
+              <div className="flex bg-zinc-100 rounded-lg p-1 gap-1 mb-3 flex-shrink-0">
+                <button
+                  onClick={() => setRightTab('ayahs')}
+                  className={`flex-1 px-3 py-2.5 rounded-md text-sm font-semibold transition-all duration-200 cursor-pointer ${rightTab === 'ayahs'
+                    ? 'bg-white text-emerald-900 shadow-sm'
+                    : 'text-zinc-500 hover:text-zinc-700'
+                    }`}
+                >
+                  Ayahs
+                  <span className={`ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold ${rightTab === 'ayahs' ? 'bg-emerald-700 text-white' : 'bg-zinc-300 text-zinc-600'
+                    }`}>
+                    {ayahs.length}
+                  </span>
+                </button>
+                <button
+                  onClick={() => setRightTab('settings')}
+                  className={`flex-1 px-3 py-2.5 rounded-md text-sm font-semibold transition-all duration-200 cursor-pointer ${rightTab === 'settings'
+                    ? 'bg-white text-emerald-900 shadow-sm'
+                    : 'text-zinc-500 hover:text-zinc-700'
+                    }`}
+                >
+                  Settings
+                </button>
               </div>
 
-              <div className="bg-white rounded-md p-4 border border-zinc-200 space-y-4">
-                <h3 className="text-sm font-semibold text-emerald-900 uppercase tracking-wide">Background</h3>
-                <BackgroundPicker value={background} onChange={setBackground} />
-                {background.type !== 'video' && (
-                  <div className="space-y-1.5 pt-2 border-t border-zinc-100">
-                    <div className="flex justify-between text-xs text-zinc-500">
-                      <span>Video opacity</span>
-                      <span>{Math.round(videoOpacity * 100)}%</span>
-                    </div>
-                    <input
-                      type="range" min="0" max="1" step="0.05"
-                      value={videoOpacity}
-                      onChange={(e) => setVideoOpacity(parseFloat(e.target.value))}
-                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+              {/* Scrollable panel body */}
+              <div className="ayahclip-panel-scroll flex-1 min-h-0 lg:overflow-y-auto pr-1 space-y-4">
+                {rightTab === 'ayahs' && (
+                  <div className="bg-white rounded-md p-4 border border-zinc-200">
+                    <h3 className="text-sm font-semibold mb-3 text-emerald-900 uppercase tracking-wide">
+                      Detected Ayahs ({ayahs.length})
+                    </h3>
+                    <AyahTimeline
+                      ayahs={ayahs}
+                      onUpdate={setAyahs}
+                      duration={videoDuration}
+                      currentTime={currentTime}
+                      onSeek={handleTimelineSeek}
+                      globalTextStyle={globalTextStyle}
                     />
                   </div>
                 )}
-                <div className="space-y-3 pt-2 border-t border-zinc-100">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-zinc-500">Overlay type</span>
-                    <select
-                      value={overlayType}
-                      onChange={(e) => setOverlayType(e.target.value as any)}
-                      className="bg-white text-zinc-800 border border-zinc-200 rounded px-2 py-1 text-xs outline-none"
-                    >
-                      <option value="none">None</option>
-                      <option value="bottom">Bottom Gradient</option>
-                      <option value="full">Full Black Overlay</option>
-                    </select>
-                  </div>
-                  {overlayType !== 'none' && (
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between text-xs text-zinc-500">
-                        <span>Overlay strength</span>
-                        <span>{Math.round(overlayOpacity * 100)}%</span>
+
+                {rightTab === 'settings' && (
+                  <>
+                    <div className="bg-white rounded-md p-4 border border-zinc-200 space-y-4">
+                      <h3 className="text-sm font-semibold text-emerald-900 uppercase tracking-wide">Format</h3>
+                      <div className="grid grid-cols-2 gap-2">
+                        {ASPECT_RATIO_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.value}
+                            onClick={() => setAspectRatio(opt.value)}
+                            className={`px-3 py-2 rounded text-xs transition-colors ${aspectRatio === opt.value ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
                       </div>
-                      <input
-                        type="range" min="0" max="1" step="0.05"
-                        value={overlayOpacity}
-                        onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))}
-                        className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
-                      />
                     </div>
-                  )}
-                </div>
+
+                    <div className="bg-white rounded-md p-4 border border-zinc-200 space-y-4">
+                      <h3 className="text-sm font-semibold text-emerald-900 uppercase tracking-wide">Background</h3>
+                      <BackgroundPicker value={background} onChange={setBackground} />
+                      {background.type !== 'video' && (
+                        <div className="space-y-1.5 pt-2 border-t border-zinc-100">
+                          <div className="flex justify-between text-xs text-zinc-500">
+                            <span>Video opacity</span>
+                            <span>{Math.round(videoOpacity * 100)}%</span>
+                          </div>
+                          <input
+                            type="range" min="0" max="1" step="0.05"
+                            value={videoOpacity}
+                            onChange={(e) => setVideoOpacity(parseFloat(e.target.value))}
+                            className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                          />
+                        </div>
+                      )}
+                      <div className="space-y-3 pt-2 border-t border-zinc-100">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-zinc-500">Overlay type</span>
+                          <select
+                            value={overlayType}
+                            onChange={(e) => setOverlayType(e.target.value as any)}
+                            className="bg-white text-zinc-800 border border-zinc-200 rounded px-2 py-1 text-xs outline-none"
+                          >
+                            <option value="none">None</option>
+                            <option value="bottom">Bottom Gradient</option>
+                            <option value="full">Full Black Overlay</option>
+                          </select>
+                        </div>
+                        {overlayType !== 'none' && (
+                          <div className="space-y-1.5">
+                            <div className="flex justify-between text-xs text-zinc-500">
+                              <span>Overlay strength</span>
+                              <span>{Math.round(overlayOpacity * 100)}%</span>
+                            </div>
+                            <input
+                              type="range" min="0" max="1" step="0.05"
+                              value={overlayOpacity}
+                              onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))}
+                              className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-md p-4 border border-zinc-200 space-y-4">
+                      <h3 className="text-sm font-semibold text-emerald-900 uppercase tracking-wide">Typography & Layout</h3>
+
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-zinc-600">Text color</span>
+                        <input
+                          type="color" value={textColor}
+                          onChange={(e) => setTextColor(e.target.value)}
+                          className="w-8 h-8 rounded cursor-pointer border border-zinc-200 bg-transparent"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5 pt-2 border-t border-zinc-100">
+                        <label className="text-xs text-zinc-500 block">Arabic Font</label>
+                        <select
+                          value={arabicFont}
+                          onChange={(e) => setArabicFont(e.target.value)}
+                          className="w-full bg-white text-zinc-800 border border-zinc-200 rounded p-1.5 text-xs outline-none"
+                          style={{ fontFamily: arabicFont }}
+                        >
+                          {ARABIC_FONTS.map((f) => (
+                            <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5 pt-2 border-t border-zinc-100">
+                        <label className="text-xs text-zinc-500 block">English Font</label>
+                        <select
+                          value={englishFont}
+                          onChange={(e) => setEnglishFont(e.target.value)}
+                          className="w-full bg-white text-zinc-800 border border-zinc-200 rounded p-1.5 text-xs outline-none"
+                          style={{ fontFamily: englishFont }}
+                        >
+                          {ENGLISH_FONTS.map((f) => (
+                            <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-3 pt-2 border-t border-zinc-100">
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-xs text-zinc-500">
+                            <span>Arabic font size</span>
+                            <span>{arabicFontSize}px</span>
+                          </div>
+                          <input
+                            type="range" min="16" max="80" step="1"
+                            value={arabicFontSize}
+                            onChange={(e) => setArabicFontSize(parseInt(e.target.value))}
+                            className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-xs text-zinc-500">
+                            <span>English font size</span>
+                            <span>{englishFontSize}px</span>
+                          </div>
+                          <input
+                            type="range" min="12" max="60" step="1"
+                            value={englishFontSize}
+                            onChange={(e) => setEnglishFontSize(parseInt(e.target.value))}
+                            className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2 border-t border-zinc-100">
+                        <div className="space-y-1.5">
+                          <label className="text-xs text-zinc-500 block">Entrance animation (default for all ayahs)</label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {TEXT_ANIMATION_OPTIONS.map((opt) => (
+                              <button
+                                key={opt.value}
+                                onClick={() => setTextAnimation(opt.value)}
+                                className={`px-2 py-1.5 rounded text-xs transition-colors ${textAnimation === opt.value ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                          <p className="text-[10px] text-zinc-400">Override per ayah in the Ayahs tab.</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2 border-t border-zinc-100">
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-xs text-zinc-500">
+                            <span>Arabic line height</span>
+                            <span>{arabicLineHeight.toFixed(2)}</span>
+                          </div>
+                          <input
+                            type="range" min="1" max="3" step="0.05"
+                            value={arabicLineHeight}
+                            onChange={(e) => setArabicLineHeight(parseFloat(e.target.value))}
+                            className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-xs text-zinc-500">
+                            <span>English line height</span>
+                            <span>{englishLineHeight.toFixed(2)}</span>
+                          </div>
+                          <input
+                            type="range" min="1" max="3" step="0.05"
+                            value={englishLineHeight}
+                            onChange={(e) => setEnglishLineHeight(parseFloat(e.target.value))}
+                            className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-xs text-zinc-500">
+                            <span>Arabic padding</span>
+                            <span>{arabicPadding}px</span>
+                          </div>
+                          <input
+                            type="range" min="0" max="48" step="1"
+                            value={arabicPadding}
+                            onChange={(e) => setArabicPadding(parseInt(e.target.value))}
+                            className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="flex justify-between text-xs text-zinc-500">
+                            <span>English padding</span>
+                            <span>{englishPadding}px</span>
+                          </div>
+                          <input
+                            type="range" min="0" max="48" step="1"
+                            value={englishPadding}
+                            onChange={(e) => setEnglishPadding(parseInt(e.target.value))}
+                            className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2 border-t border-zinc-100">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-zinc-600">Show translation</span>
+                          <button
+                            onClick={() => setShowTranslation(!showTranslation)}
+                            className={`w-10 h-6 rounded-full transition-colors relative ${showTranslation ? 'bg-emerald-700' : 'bg-zinc-200'}`}
+                          >
+                            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${showTranslation ? 'left-5' : 'left-1'}`} />
+                          </button>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className="text-sm text-zinc-600">Word highlight</span>
+                            <p className="text-xs text-zinc-400 mt-0.5">Highlight each word as recited</p>
+                          </div>
+                          <button
+                            onClick={() => setWordHighlight(!wordHighlight)}
+                            className={`w-10 h-6 rounded-full transition-colors relative flex-shrink-0 ${wordHighlight ? 'bg-emerald-700' : 'bg-zinc-200'}`}
+                          >
+                            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${wordHighlight ? 'left-5' : 'left-1'}`} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2 border-t border-zinc-100">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-zinc-600">Vertical Position (default)</span>
+                          <div className="flex gap-1">
+                            {(['bottom', 'center'] as const).map((p) => (
+                              <button
+                                key={p}
+                                onClick={() => {
+                                  setVerticalPosition(p);
+                                  // reset manual drag positions so the new default takes effect
+                                  setArabicPosition(null);
+                                  setEnglishPosition(null);
+                                }}
+                                className={`px-3 py-1 rounded text-xs transition-colors capitalize ${verticalPosition === p ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
+                              >
+                                {p}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {(arabicPosition || englishPosition) && (
+                          <button
+                            onClick={() => {
+                              setArabicPosition(null);
+                              setEnglishPosition(null);
+                            }}
+                            className="text-xs text-emerald-700 hover:underline"
+                          >
+                            Reset text position to default
+                          </button>
+                        )}
+
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-zinc-500">Arabic Align</span>
+                          <div className="flex gap-1">
+                            {(['right', 'center'] as const).map((a) => (
+                              <button
+                                key={a}
+                                onClick={() => setArabicAlign(a)}
+                                className={`px-2 py-1 rounded text-xs transition-colors capitalize ${arabicAlign === a ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
+                              >
+                                {a}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-zinc-500">English Align</span>
+                          <div className="flex gap-1">
+                            {(['left', 'center'] as const).map((a) => (
+                              <button
+                                key={a}
+                                onClick={() => setEnglishAlign(a)}
+                                className={`px-2 py-1 rounded text-xs transition-colors capitalize ${englishAlign === a ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
+                              >
+                                {a}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
-              <div className="bg-white rounded-md p-4 border border-zinc-200 space-y-4">
-                <h3 className="text-sm font-semibold text-emerald-900 uppercase tracking-wide">Typography & Layout</h3>
-
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-zinc-600">Text color</span>
-                  <input
-                    type="color" value={textColor}
-                    onChange={(e) => setTextColor(e.target.value)}
-                    className="w-8 h-8 rounded cursor-pointer border border-zinc-200 bg-transparent"
-                  />
-                </div>
-
-                <div className="space-y-1.5 pt-2 border-t border-zinc-100">
-                  <label className="text-xs text-zinc-500 block">Arabic Font</label>
-                  <select
-                    value={arabicFont}
-                    onChange={(e) => setArabicFont(e.target.value)}
-                    className="w-full bg-white text-zinc-800 border border-zinc-200 rounded p-1.5 text-xs outline-none"
-                    style={{ fontFamily: arabicFont }}
-                  >
-                    {ARABIC_FONTS.map((f) => (
-                      <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1.5 pt-2 border-t border-zinc-100">
-                  <label className="text-xs text-zinc-500 block">English Font</label>
-                  <select
-                    value={englishFont}
-                    onChange={(e) => setEnglishFont(e.target.value)}
-                    className="w-full bg-white text-zinc-800 border border-zinc-200 rounded p-1.5 text-xs outline-none"
-                    style={{ fontFamily: englishFont }}
-                  >
-                    {ENGLISH_FONTS.map((f) => (
-                      <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-3 pt-2 border-t border-zinc-100">
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-xs text-zinc-500">
-                      <span>Arabic font size</span>
-                      <span>{arabicFontSize}px</span>
-                    </div>
-                    <input
-                      type="range" min="16" max="80" step="1"
-                      value={arabicFontSize}
-                      onChange={(e) => setArabicFontSize(parseInt(e.target.value))}
-                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-xs text-zinc-500">
-                      <span>English font size</span>
-                      <span>{englishFontSize}px</span>
-                    </div>
-                    <input
-                      type="range" min="12" max="60" step="1"
-                      value={englishFontSize}
-                      onChange={(e) => setEnglishFontSize(parseInt(e.target.value))}
-                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-3 pt-2 border-t border-zinc-100">
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-zinc-500 block">Entrance animation (default for all ayahs)</label>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {TEXT_ANIMATION_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.value}
-                          onClick={() => setTextAnimation(opt.value)}
-                          className={`px-2 py-1.5 rounded text-xs transition-colors ${textAnimation === opt.value ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-[10px] text-zinc-400">Override per ayah in the timeline below.</p>
-                  </div>
-                </div>
-
-                <div className="space-y-3 pt-2 border-t border-zinc-100">
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-xs text-zinc-500">
-                      <span>Arabic line height</span>
-                      <span>{arabicLineHeight.toFixed(2)}</span>
-                    </div>
-                    <input
-                      type="range" min="1" max="3" step="0.05"
-                      value={arabicLineHeight}
-                      onChange={(e) => setArabicLineHeight(parseFloat(e.target.value))}
-                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-xs text-zinc-500">
-                      <span>English line height</span>
-                      <span>{englishLineHeight.toFixed(2)}</span>
-                    </div>
-                    <input
-                      type="range" min="1" max="3" step="0.05"
-                      value={englishLineHeight}
-                      onChange={(e) => setEnglishLineHeight(parseFloat(e.target.value))}
-                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-xs text-zinc-500">
-                      <span>Arabic padding</span>
-                      <span>{arabicPadding}px</span>
-                    </div>
-                    <input
-                      type="range" min="0" max="48" step="1"
-                      value={arabicPadding}
-                      onChange={(e) => setArabicPadding(parseInt(e.target.value))}
-                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-xs text-zinc-500">
-                      <span>English padding</span>
-                      <span>{englishPadding}px</span>
-                    </div>
-                    <input
-                      type="range" min="0" max="48" step="1"
-                      value={englishPadding}
-                      onChange={(e) => setEnglishPadding(parseInt(e.target.value))}
-                      className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-3 pt-2 border-t border-zinc-100">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-zinc-600">Show translation</span>
-                    <button
-                      onClick={() => setShowTranslation(!showTranslation)}
-                      className={`w-10 h-6 rounded-full transition-colors relative ${showTranslation ? 'bg-emerald-700' : 'bg-zinc-200'}`}
-                    >
-                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${showTranslation ? 'left-5' : 'left-1'}`} />
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="text-sm text-zinc-600">Word highlight</span>
-                      <p className="text-xs text-zinc-400 mt-0.5">Highlight each word as recited</p>
-                    </div>
-                    <button
-                      onClick={() => setWordHighlight(!wordHighlight)}
-                      className={`w-10 h-6 rounded-full transition-colors relative flex-shrink-0 ${wordHighlight ? 'bg-emerald-700' : 'bg-zinc-200'}`}
-                    >
-                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${wordHighlight ? 'left-5' : 'left-1'}`} />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-3 pt-2 border-t border-zinc-100">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-zinc-600">Vertical Position (default)</span>
-                    <div className="flex gap-1">
-                      {(['bottom', 'center'] as const).map((p) => (
-                        <button
-                          key={p}
-                          onClick={() => {
-                            setVerticalPosition(p);
-                            // reset manual drag positions so the new default takes effect
-                            setArabicPosition(null);
-                            setEnglishPosition(null);
-                          }}
-                          className={`px-3 py-1 rounded text-xs transition-colors capitalize ${verticalPosition === p ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
-                        >
-                          {p}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {(arabicPosition || englishPosition) && (
-                    <button
-                      onClick={() => {
-                        setArabicPosition(null);
-                        setEnglishPosition(null);
-                      }}
-                      className="text-xs text-emerald-700 hover:underline"
-                    >
-                      Reset text position to default
-                    </button>
-                  )}
-
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-zinc-500">Arabic Align</span>
-                    <div className="flex gap-1">
-                      {(['right', 'center'] as const).map((a) => (
-                        <button
-                          key={a}
-                          onClick={() => setArabicAlign(a)}
-                          className={`px-2 py-1 rounded text-xs transition-colors capitalize ${arabicAlign === a ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
-                        >
-                          {a}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-zinc-500">English Align</span>
-                    <div className="flex gap-1">
-                      {(['left', 'center'] as const).map((a) => (
-                        <button
-                          key={a}
-                          onClick={() => setEnglishAlign(a)}
-                          className={`px-2 py-1 rounded text-xs transition-colors capitalize ${englishAlign === a ? 'bg-emerald-700 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
-                        >
-                          {a}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
+              {/* Export button — always visible, pinned below the scroll area */}
               <button
                 onClick={() => setStep('export')}
-                className="w-full py-3 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold rounded-md transition-colors"
+                className="w-full py-3 mt-4 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold rounded-md transition-colors flex-shrink-0 cursor-pointer"
               >
                 Export Video
               </button>
@@ -1331,6 +1372,26 @@ export default function Home() {
           </>
         }
       />
+
+      <style>{`
+        .ayahclip-panel-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: #d4d4d8 transparent;
+        }
+        .ayahclip-panel-scroll::-webkit-scrollbar {
+          width: 6px;
+        }
+        .ayahclip-panel-scroll::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .ayahclip-panel-scroll::-webkit-scrollbar-thumb {
+          background-color: #d4d4d8;
+          border-radius: 9999px;
+        }
+        .ayahclip-panel-scroll::-webkit-scrollbar-thumb:hover {
+          background-color: #a1a1aa;
+        }
+      `}</style>
     </main >
   );
 }
