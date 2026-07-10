@@ -7,6 +7,8 @@ import {
   GlobalTextStyle,
   resolveAyahStyle,
 } from '@/lib/ayah-styles';
+import { getAdaptiveShadow } from '@/lib/text-shadow';
+import { CANVAS_SIZE } from '@/lib/export-render';
 
 // ============================================================
 // TYPES
@@ -52,8 +54,10 @@ interface Props {
   englishPosition?: TextPosition | null;
   onArabicPositionChange?: (pos: TextPosition) => void;
   onEnglishPositionChange?: (pos: TextPosition) => void;
+  onAyahPositionChange?: (index: number, target: 'arabic' | 'english', pos: TextPosition) => void;
   showSurahLabel?: boolean;
   surahLabelLang?: SurahLabelLang;
+  surahLabelFontSize?: number;
 }
 
 const ASPECT_RATIO_CSS: Record<AspectRatio, string> = {
@@ -72,23 +76,6 @@ const ASPECT_CONTAINER_CLASS: Record<AspectRatio, string> = {
 
 const SNAP_THRESHOLD = 3;
 
-// Picks a shadow color that stays readable against the chosen text color,
-// instead of a hardcoded black shadow that disappears (or looks like a smudge)
-// whenever the text itself is dark/black on a light background.
-function getAdaptiveShadow(hexColor: string): string {
-  const clean = hexColor.replace('#', '');
-  const r = parseInt(clean.substring(0, 2), 16) || 0;
-  const g = parseInt(clean.substring(2, 4), 16) || 0;
-  const b = parseInt(clean.substring(4, 6), 16) || 0;
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-
-  // Light text (white/near-white) -> dark shadow for contrast on any background.
-  // Dark text (black/near-black) -> soft light shadow instead of invisible black-on-black.
-  return luminance > 0.6
-    ? '0 2px 8px rgba(0,0,0,0.85)'
-    : '0 1px 4px rgba(255,255,255,0.5)';
-}
-
 export default function VideoPreview({
   videoUrl, isAudioOnly = false, ayahs, background, textColor, showTranslation, duration,
   videoOpacity, overlayType, overlayOpacity, arabicFont, englishFont,
@@ -104,12 +91,15 @@ export default function VideoPreview({
   englishPosition = null,
   onArabicPositionChange,
   onEnglishPositionChange,
+  onAyahPositionChange,
   showSurahLabel = true,
   surahLabelLang = 'english',
+  surahLabelFontSize = 16,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const bgVideoRef = useRef<HTMLVideoElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null); // outer, visible-size box (drag math uses this)
+  const stageRef = useRef<HTMLDivElement>(null);     // inner, fixed-resolution box matching export canvas
   const arabicElRef = useRef<HTMLDivElement>(null);
   const englishElRef = useRef<HTMLDivElement>(null);
 
@@ -123,6 +113,34 @@ export default function VideoPreview({
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSeekTokenRef = useRef<number | null>(null);
 
+  // ------------------------------------------------------------------
+  // STAGE SCALING
+  // The stage is always rendered internally at the exact same pixel
+  // dimensions as the export canvas (CANVAS_SIZE[aspectRatio]). We then
+  // scale that whole stage down with a CSS transform to fit whatever
+  // visible box the container happens to render at on screen. Because
+  // every font-size / padding / marker-size value is authored against
+  // this fixed internal resolution, it lines up 1:1 with drawExportFrame
+  // in export-render.ts — no more "tiny text after export" mismatches.
+  // ------------------------------------------------------------------
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const { width } = CANVAS_SIZE[aspectRatio];
+
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0) setScale(rect.width / width);
+    };
+
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [aspectRatio]);
+
   const dragRef = useRef<{
     target: 'arabic' | 'english';
     origX: number;
@@ -135,6 +153,7 @@ export default function VideoPreview({
 
   const [draggingTarget, setDraggingTarget] = useState<'arabic' | 'english' | null>(null);
   const [snapGuides, setSnapGuides] = useState<{ x: boolean; y: boolean }>({ x: false, y: false });
+  const [positionScope, setPositionScope] = useState<'global' | 'ayah'>('global');
 
   const hasDraggedRef = useRef(false);
 
@@ -262,9 +281,24 @@ export default function VideoPreview({
     const wWords = ayah.words || [];
 
     if (!wordHighlight) {
+      // Render word-by-word with inline-block spans so that line wrapping
+      // matches the canvas export's manual word-by-word algorithm (GAP = 6,
+      // equivalent to margin: 0 3px on each side = 6px between words).
       return (
-        <span style={{ color, textShadow: getAdaptiveShadow(color) }}>
-          {ayah.arabic}
+        <span>
+          {dbWords.map((word, i) => (
+            <span
+              key={i}
+              style={{
+                display: 'inline-block',
+                margin: '0 3px',
+                color,
+                textShadow: getAdaptiveShadow(color),
+              }}
+            >
+              {word}
+            </span>
+          ))}
         </span>
       );
     }
@@ -364,8 +398,14 @@ export default function VideoPreview({
   const defaultArabicPos: TextPosition = { x: 50, y: verticalPosition === 'center' ? 42 : 72 };
   const defaultEnglishPos: TextPosition = { x: 50, y: verticalPosition === 'center' ? 58 : 86 };
 
-  const arabicPos = arabicPosition ?? defaultArabicPos;
-  const englishPos = englishPosition ?? defaultEnglishPos;
+  const currentAyahIndex = currentAyah ? ayahs.indexOf(currentAyah) : -1;
+  const perAyahArabicPos = currentAyah?.style?.arabicPosition;
+  const perAyahEnglishPos = currentAyah?.style?.englishPosition;
+
+  const arabicPos =
+    positionScope === 'ayah' && perAyahArabicPos ? perAyahArabicPos : arabicPosition ?? defaultArabicPos;
+  const englishPos =
+    positionScope === 'ayah' && perAyahEnglishPos ? perAyahEnglishPos : englishPosition ?? defaultEnglishPos;
 
   const applyTransform = (target: 'arabic' | 'english', xPct: number, yPct: number) => {
     const el = target === 'arabic' ? arabicElRef.current : englishElRef.current;
@@ -375,6 +415,9 @@ export default function VideoPreview({
     }
   };
 
+  // Drag math is done in % of the OUTER (visible, on-screen) container size.
+  // This is scale-invariant — a % of the visible box is the same % of the
+  // internal stage box — so dragging behaves identically regardless of scale.
   const startDrag = (target: 'arabic' | 'english') => (e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -425,15 +468,20 @@ export default function VideoPreview({
   const stopDrag = useCallback(() => {
     const drag = dragRef.current;
     if (drag) {
-      if (drag.target === 'arabic') onArabicPositionChange?.({ x: drag.liveX, y: drag.liveY });
-      else onEnglishPositionChange?.({ x: drag.liveX, y: drag.liveY });
+      if (positionScope === 'ayah' && currentAyahIndex !== -1) {
+        onAyahPositionChange?.(currentAyahIndex, drag.target, { x: drag.liveX, y: drag.liveY });
+      } else if (drag.target === 'arabic') {
+        onArabicPositionChange?.({ x: drag.liveX, y: drag.liveY });
+      } else {
+        onEnglishPositionChange?.({ x: drag.liveX, y: drag.liveY });
+      }
     }
     dragRef.current = null;
     setDraggingTarget(null);
     setSnapGuides({ x: false, y: false });
     window.removeEventListener('pointermove', handleDragMove);
     window.removeEventListener('pointerup', stopDrag);
-  }, [handleDragMove, onArabicPositionChange, onEnglishPositionChange]);
+  }, [handleDragMove, onArabicPositionChange, onEnglishPositionChange, onAyahPositionChange, positionScope, currentAyahIndex]);
 
   useEffect(() => () => {
     window.removeEventListener('pointermove', handleDragMove);
@@ -483,6 +531,8 @@ export default function VideoPreview({
     ? ''
     : `ayahclip-anim-${activeStyle.textAnimation}`;
 
+  const stageSize = CANVAS_SIZE[aspectRatio];
+
   return (
     <div className="space-y-2">
       <style>{`
@@ -503,33 +553,192 @@ export default function VideoPreview({
           onMouseEnter={resetControlsTimer}
           onClick={handleContainerClick}
         >
-          <div className="absolute inset-0" style={getBackgroundStyle()}>
-            {background.type === 'image' && (
-              <div className="absolute inset-0 backdrop-blur-sm bg-black/30" />
+          {/* ================================================================
+              SCALED STAGE — fixed internal resolution matching the export
+              canvas (CANVAS_SIZE[aspectRatio]). Everything whose pixel sizing
+              must match the exported video (background, video layer, overlay
+              gradients, Arabic/English text blocks) lives in here. Font
+              sizes, paddings, and positions are all authored against this
+              same coordinate space that drawExportFrame() uses, so preview
+              and export can no longer drift apart.
+          ================================================================ */}
+          <div
+            ref={stageRef}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: stageSize.width,
+              height: stageSize.height,
+              transform: `scale(${scale})`,
+              transformOrigin: 'top left',
+            }}
+          >
+            <div className="absolute inset-0" style={getBackgroundStyle()}>
+              {background.type === 'image' && (
+                <div className="absolute inset-0 backdrop-blur-sm bg-black/30" />
+              )}
+              {background.type === 'video' && (
+                <>
+                  <video ref={bgVideoRef} src={background.url}
+                    className="absolute inset-0 w-full h-full object-cover"
+                    autoPlay loop muted playsInline />
+                  <div className="absolute inset-0 backdrop-blur-md bg-black/50" />
+                </>
+              )}
+            </div>
+
+            {background.type === 'video' || isAudioOnly
+              ? <video ref={videoRef} src={videoUrl} className="hidden" playsInline />
+              : <video ref={videoRef} src={videoUrl}
+                className="absolute inset-0 w-full h-full object-cover"
+                style={{ opacity: videoOpacity }} playsInline />
+            }
+
+            {overlayType === 'full' && (
+              <div className="absolute inset-0 bg-black pointer-events-none" style={{ opacity: overlayOpacity }} />
             )}
-            {background.type === 'video' && (
-              <>
-                <video ref={bgVideoRef} src={background.url}
-                  className="absolute inset-0 w-full h-full object-cover"
-                  autoPlay loop muted playsInline />
-                <div className="absolute inset-0 backdrop-blur-md bg-black/50" />
-              </>
+            {overlayType === 'bottom' && (
+              <div className="absolute bottom-0 left-0 right-0 h-2/3 pointer-events-none"
+                style={{ background: `linear-gradient(to top, rgba(0,0,0,${overlayOpacity}) 0%, rgba(0,0,0,${overlayOpacity * 0.6}) 50%, transparent 100%)` }} />
+            )}
+
+            {currentAyah && (
+              <div
+                key={`ar-${currentAyah.startTime}`}
+                ref={arabicElRef}
+                onPointerDown={startDrag('arabic')}
+                className={`absolute cursor-grab active:cursor-grabbing select-none ${animClass}`}
+                style={{
+                  left: `${arabicPos.x}%`,
+                  top: `${arabicPos.y}%`,
+                  transform: 'translate(-50%, -50%)',
+                  width: 'min(92%, 900px)',
+                  padding: `${activeStyle.arabicPadding}px`,
+                  touchAction: 'none',
+                  outline: draggingTarget === 'arabic' ? '1px dashed rgba(255,255,255,0.6)' : 'none',
+                  outlineOffset: '6px',
+                }}
+              >
+                <div style={{
+                  fontFamily: `"${arabicFont}", serif`,
+                  fontSize: `${activeStyle.arabicFontSize}px`,
+                  lineHeight: activeStyle.arabicLineHeight,
+                  direction: 'rtl',
+                  textAlign: arabicAlign,
+                  wordBreak: 'break-word',
+                }}>
+                  {renderArabic(currentAyah, renderColor)}
+
+                  {currentAyah.isFullAyah && currentAyah.ayahNumber !== null && currentAyah.ayahNumber !== 0 && (
+                    <span style={{
+                      display: 'inline-block',
+                      marginRight: '8px',
+                      position: 'relative',
+                      verticalAlign: 'middle',
+                      lineHeight: 1,
+                    }}>
+                      <span style={{
+                        fontSize: `${activeStyle.arabicFontSize * 1.1}px`,
+                        color: renderColor,
+                        opacity: 0.85,
+                        textShadow: `0 0 16px rgba(52,211,153,0.5), ${getAdaptiveShadow(renderColor)}`,
+                        fontFamily: `"Scheherazade New", "Amiri", serif`,
+                      }}>
+                        ۝
+                      </span>
+                      <span style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        fontSize: `${Math.max(10, activeStyle.arabicFontSize * 0.32)}px`,
+                        color: renderColor,
+                        fontFamily: `"Scheherazade New", "Amiri", serif`,
+                        pointerEvents: 'none',
+                        lineHeight: 1,
+                        marginTop: '1px',
+                      }}>
+                        {toArabicNumeral(currentAyah.ayahNumber)}
+                      </span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {currentAyah && (showTranslation || surahLabelText) && (
+              <div
+                key={`en-${currentAyah.startTime}`}
+                ref={englishElRef}
+                onPointerDown={startDrag('english')}
+                className={`absolute cursor-grab active:cursor-grabbing select-none ${animClass}`}
+                style={{
+                  left: `${englishPos.x}%`,
+                  top: `${englishPos.y}%`,
+                  transform: 'translate(-50%, -50%)',
+                  width: 'min(90%, 800px)',
+                  padding: `${activeStyle.englishPadding}px`,
+                  touchAction: 'none',
+                  outline: draggingTarget === 'english' ? '1px dashed rgba(255,255,255,0.6)' : 'none',
+                  outlineOffset: '6px',
+                }}
+              >
+                {showTranslation && currentAyah.translation && (
+                  <p style={{
+                    color: renderColor, opacity: 0.9,
+                    fontFamily: `"${englishFont}", sans-serif`,
+                    fontSize: `${activeStyle.englishFontSize}px`,
+                    textAlign: englishAlign,
+                    lineHeight: activeStyle.englishLineHeight,
+                    textShadow: getAdaptiveShadow(renderColor),
+                    margin: 0,
+                  }}>
+                    {currentAyah.translation}
+                  </p>
+                )}
+
+                {surahLabelText && (
+                  <p style={{
+                    color: renderColor, opacity: 0.45,
+                    fontFamily: `"${englishFont}", sans-serif`,
+                    fontSize: `${surahLabelFontSize}px`,
+                    textAlign: englishAlign,
+                    letterSpacing: '0.08em',
+                    textTransform: surahLabelLang === 'arabic' ? 'none' : 'uppercase',
+                    direction: surahLabelLang === 'arabic' ? 'rtl' : 'ltr',
+                    margin: showTranslation ? '8px 0 0' : 0,
+                  }}>
+                    {surahLabelText}
+                  </p>
+                )}
+              </div>
             )}
           </div>
+          {/* ============================ END STAGE ============================ */}
 
-          {background.type === 'video' || isAudioOnly
-            ? <video ref={videoRef} src={videoUrl} className="hidden" playsInline />
-            : <video ref={videoRef} src={videoUrl}
-              className="absolute inset-0 w-full h-full object-cover"
-              style={{ opacity: videoOpacity }} playsInline />
-          }
+          {/* Everything below is UI chrome — deliberately kept OUTSIDE the
+              scaled stage so buttons/controls stay a comfortable, constant
+              on-screen size regardless of aspect ratio or scale factor. */}
 
-          {overlayType === 'full' && (
-            <div className="absolute inset-0 bg-black pointer-events-none" style={{ opacity: overlayOpacity }} />
-          )}
-          {overlayType === 'bottom' && (
-            <div className="absolute bottom-0 left-0 right-0 h-2/3 pointer-events-none"
-              style={{ background: `linear-gradient(to top, rgba(0,0,0,${overlayOpacity}) 0%, rgba(0,0,0,${overlayOpacity * 0.6}) 50%, transparent 100%)` }} />
+          {currentAyah && (
+            <div
+              className="absolute top-2 left-2 z-40 flex gap-1 bg-black/50 backdrop-blur-sm rounded-lg p-1"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => setPositionScope('ayah')}
+                className={`px-2 py-1 text-[10px] rounded font-medium transition-colors ${positionScope === 'ayah' ? 'bg-emerald-500 text-white' : 'text-white/70 hover:text-white'}`}
+              >
+                This ayah
+              </button>
+              <button
+                onClick={() => setPositionScope('global')}
+                className={`px-2 py-1 text-[10px] rounded font-medium transition-colors ${positionScope === 'global' ? 'bg-emerald-500 text-white' : 'text-white/70 hover:text-white'}`}
+              >
+                All ayahs
+              </button>
+            </div>
           )}
 
           {draggingTarget && snapGuides.x && (
@@ -537,118 +746,6 @@ export default function VideoPreview({
           )}
           {draggingTarget && snapGuides.y && (
             <div className="absolute left-0 right-0 top-1/2 h-px bg-emerald-400 pointer-events-none z-40 shadow-[0_0_6px_rgba(52,211,153,0.9)]" />
-          )}
-
-          {currentAyah && (
-            <div
-              key={`ar-${currentAyah.startTime}`}
-              ref={arabicElRef}
-              onPointerDown={startDrag('arabic')}
-              className={`absolute cursor-grab active:cursor-grabbing select-none ${animClass}`}
-              style={{
-                left: `${arabicPos.x}%`,
-                top: `${arabicPos.y}%`,
-                transform: 'translate(-50%, -50%)',
-                width: 'min(92%, 900px)',
-                padding: `${activeStyle.arabicPadding}px`,
-                touchAction: 'none',
-                outline: draggingTarget === 'arabic' ? '1px dashed rgba(255,255,255,0.6)' : 'none',
-                outlineOffset: '6px',
-              }}
-            >
-              <div style={{
-                fontFamily: `"${arabicFont}", serif`,
-                fontSize: `${activeStyle.arabicFontSize}px`,
-                lineHeight: activeStyle.arabicLineHeight,
-                direction: 'rtl',
-                textAlign: arabicAlign,
-                wordBreak: 'break-word',
-              }}>
-                {renderArabic(currentAyah, renderColor)}
-
-                {currentAyah.isFullAyah && currentAyah.ayahNumber !== null && currentAyah.ayahNumber !== 0 && (
-                  <span style={{
-                    display: 'inline-block',
-                    marginRight: '8px',
-                    position: 'relative',
-                    verticalAlign: 'middle',
-                    lineHeight: 1,
-                  }}>
-                    <span style={{
-                      fontSize: `${activeStyle.arabicFontSize * 1.1}px`,
-                      color: renderColor,
-                      opacity: 0.85,
-                      textShadow: `0 0 16px rgba(52,211,153,0.5), ${getAdaptiveShadow(renderColor)}`,
-                      fontFamily: `"Scheherazade New", "Amiri", serif`,
-                    }}>
-                      ۝
-                    </span>
-                    <span style={{
-                      position: 'absolute',
-                      top: '50%',
-                      left: '50%',
-                      transform: 'translate(-50%, -50%)',
-                      fontSize: `${Math.max(10, activeStyle.arabicFontSize * 0.32)}px`,
-                      color: renderColor,
-                      fontFamily: `"Scheherazade New", "Amiri", serif`,
-                      pointerEvents: 'none',
-                      lineHeight: 1,
-                      marginTop: '1px',
-                    }}>
-                      {toArabicNumeral(currentAyah.ayahNumber)}
-                    </span>
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-
-          {currentAyah && (showTranslation || surahLabelText) && (
-            <div
-              key={`en-${currentAyah.startTime}`}
-              ref={englishElRef}
-              onPointerDown={startDrag('english')}
-              className={`absolute cursor-grab active:cursor-grabbing select-none ${animClass}`}
-              style={{
-                left: `${englishPos.x}%`,
-                top: `${englishPos.y}%`,
-                transform: 'translate(-50%, -50%)',
-                width: 'min(90%, 800px)',
-                padding: `${activeStyle.englishPadding}px`,
-                touchAction: 'none',
-                outline: draggingTarget === 'english' ? '1px dashed rgba(255,255,255,0.6)' : 'none',
-                outlineOffset: '6px',
-              }}
-            >
-              {showTranslation && currentAyah.translation && (
-                <p style={{
-                  color: renderColor, opacity: 0.9,
-                  fontFamily: `"${englishFont}", sans-serif`,
-                  fontSize: `${activeStyle.englishFontSize}px`,
-                  textAlign: englishAlign,
-                  lineHeight: activeStyle.englishLineHeight,
-                  textShadow: getAdaptiveShadow(renderColor),
-                  margin: 0,
-                }}>
-                  {currentAyah.translation}
-                </p>
-              )}
-
-              {surahLabelText && (
-                <p style={{
-                  color: renderColor, opacity: 0.45,
-                  fontFamily: `"${englishFont}", sans-serif`,
-                  fontSize: '11px',
-                  textAlign: englishAlign,
-                  letterSpacing: '0.08em',
-                  textTransform: surahLabelLang === 'arabic' ? 'none' : 'uppercase',
-                  direction: surahLabelLang === 'arabic' ? 'rtl' : 'ltr',
-                  margin: showTranslation ? '8px 0 0' : 0,
-                }}>
-                  {surahLabelText}
-                </p>
-              )}
-            </div>
           )}
 
           {!playing && (

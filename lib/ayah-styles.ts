@@ -9,6 +9,8 @@ export interface AyahSegmentStyle {
   arabicPadding?: number;
   englishPadding?: number;
   textColor?: string;
+  arabicPosition?: { x: number; y: number };
+  englishPosition?: { x: number; y: number };
 }
 
 export interface GlobalTextStyle {

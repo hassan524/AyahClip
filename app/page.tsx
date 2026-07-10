@@ -157,6 +157,9 @@ export default function Home() {
   const [arabicPadding, setArabicPadding] = useState(0);
   const [englishPadding, setEnglishPadding] = useState(0);
 
+  const [showSurahLabel, setShowSurahLabel] = useState(true);
+  const [surahLabelFontSize, setSurahLabelFontSize] = useState(16);
+
   const globalTextStyle = {
     textAnimation,
     arabicFontSize,
@@ -181,6 +184,19 @@ export default function Home() {
   const handleTimelineSeek = useCallback((time: number) => {
     setSeekRequest({ time, token: Date.now() });
   }, []);
+
+  const handleAyahPositionChange = useCallback(
+    (index: number, target: 'arabic' | 'english', pos: TextPosition) => {
+      setAyahs((prev) =>
+        prev.map((ayah, idx) => {
+          if (idx !== index) return ayah;
+          const field = target === 'arabic' ? 'arabicPosition' : 'englishPosition';
+          return { ...ayah, style: { ...(ayah.style ?? {}), [field]: pos } };
+        })
+      );
+    },
+    []
+  );
 
   const handleVideoSelected = useCallback(async (file: File, url: string, duration: number) => {
     setVideoFile(file);
@@ -952,12 +968,16 @@ export default function Home() {
                 arabicPosition={arabicPosition}
                 englishPosition={englishPosition}
                 onArabicPositionChange={setArabicPosition}
+                // onEnglishPositionChange={setEnglishPosition}
+                onAyahPositionChange={handleAyahPositionChange}
                 onEnglishPositionChange={setEnglishPosition}
                 textAnimation={textAnimation}
                 arabicLineHeight={arabicLineHeight}
                 englishLineHeight={englishLineHeight}
                 arabicPadding={arabicPadding}
                 englishPadding={englishPadding}
+                showSurahLabel={showSurahLabel}
+                surahLabelFontSize={surahLabelFontSize}
               />
 
               <div className="rounded-md border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-sm text-emerald-900">
@@ -1144,6 +1164,32 @@ export default function Home() {
                             className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
                           />
                         </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2 border-t border-zinc-100">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-zinc-600">Show surah name</span>
+                          <button
+                            onClick={() => setShowSurahLabel(!showSurahLabel)}
+                            className={`w-10 h-6 rounded-full transition-colors relative ${showSurahLabel ? 'bg-emerald-700' : 'bg-zinc-200'}`}
+                          >
+                            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${showSurahLabel ? 'left-5' : 'left-1'}`} />
+                          </button>
+                        </div>
+                        {showSurahLabel && (
+                          <div className="space-y-1.5">
+                            <div className="flex justify-between text-xs text-zinc-500">
+                              <span>Surah name size</span>
+                              <span>{surahLabelFontSize}px</span>
+                            </div>
+                            <input
+                              type="range" min="10" max="48" step="1"
+                              value={surahLabelFontSize}
+                              onChange={(e) => setSurahLabelFontSize(parseInt(e.target.value))}
+                              className="w-full h-1 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+                            />
+                          </div>
+                        )}
                       </div>
 
                       <div className="space-y-3 pt-2 border-t border-zinc-100">
@@ -1343,8 +1389,13 @@ export default function Home() {
             englishLineHeight={englishLineHeight}
             arabicPadding={arabicPadding}
             englishPadding={englishPadding}
+            aspectRatio={aspectRatio}
+            arabicPosition={arabicPosition}
+            englishPosition={englishPosition}
             onBack={() => setStep('edit')}
             wordHighlight={wordHighlight}
+            showSurahLabel={showSurahLabel}
+            surahLabelFontSize={surahLabelFontSize}
           />
         )}
       </div>
@@ -1363,7 +1414,7 @@ export default function Home() {
             <br />
             <br />
             Email:{' '}
-            <a 
+            <a
               href="mailto:hassanrehan9975@gmail.com"
               className="text-emerald-700 hover:underline"
             >

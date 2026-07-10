@@ -5,10 +5,13 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const GEMINI_MODEL = 'gemini-2.5-flash';
 
-// Gemini occasionally returns 503 UNAVAILABLE / 429 RESOURCE_EXHAUSTED under load.
-// These are transient — retry with exponential backoff instead of failing the whole chunk.
+// Single model. Kept as an array so generateContentWithRetry's loop logic
+// (retries + model-gone fallback) doesn't need to change.
+const MODEL_CANDIDATES = [
+  'gemini-2.5-flash',
+];
+
 function isRetryableError(err: any): boolean {
   const status = err?.status ?? err?.error?.code;
   const message = String(err?.message || err?.error?.message || '');
@@ -19,26 +22,44 @@ function isRetryableError(err: any): boolean {
   );
 }
 
+function isModelGoneError(err: any): boolean {
+  const status = err?.status ?? err?.error?.code;
+  const message = String(err?.message || err?.error?.message || '');
+  return status === 404 || /is no longer available|NOT_FOUND/i.test(message);
+}
+
 async function generateContentWithRetry(
-  params: Parameters<typeof ai.models.generateContent>[0],
-  maxRetries = 4
+  buildParams: (model: string) => Parameters<typeof ai.models.generateContent>[0],
+  maxRetriesPerModel = 3
 ) {
   let lastErr: any;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await ai.models.generateContent(params);
-    } catch (err: any) {
-      lastErr = err;
-      if (!isRetryableError(err) || attempt === maxRetries) throw err;
 
-      // Exponential backoff with jitter: ~1s, 2s, 4s, 8s (+ up to 500ms jitter)
-      const delayMs = Math.min(1000 * 2 ** attempt, 8000) + Math.random() * 500;
-      console.warn(
-        `Gemini overloaded (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${Math.round(delayMs)}ms...`
-      );
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+  for (const model of MODEL_CANDIDATES) {
+    for (let attempt = 0; attempt <= maxRetriesPerModel; attempt++) {
+      try {
+        return await ai.models.generateContent(buildParams(model));
+      } catch (err: any) {
+        lastErr = err;
+
+        if (isModelGoneError(err)) {
+          console.warn(`Model ${model} is unavailable, trying next candidate...`);
+          break; // stop retrying this model, move to next one in outer loop
+        }
+
+        if (!isRetryableError(err) || attempt === maxRetriesPerModel) {
+          if (isRetryableError(err)) break; // exhausted retries on this model, try next
+          throw err; // non-retryable, non-"model gone" error — fail immediately
+        }
+
+        const delayMs = Math.min(1000 * 2 ** attempt, 8000) + Math.random() * 500;
+        console.warn(
+          `${model} overloaded (attempt ${attempt + 1}/${maxRetriesPerModel + 1}), retrying in ${Math.round(delayMs)}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
   }
+
   throw lastErr;
 }
 
@@ -61,7 +82,6 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(await audioFile.arrayBuffer());
     const base64Audio = buffer.toString('base64');
 
-    // System prompt ordering Gemini to track the audio timestamps
     const prompt = `
       You are an expert Quranic transcription system. Listen to the provided audio file with maximum focus.
       Transcribe the audio accurately into Arabic text and capture the exact start_time and end_time (in seconds) for each recited segment.
@@ -71,9 +91,8 @@ export async function POST(req: NextRequest) {
       2. Listen meticulously for Muqatta'at (disjoined letters) at the opening of Surahs (e.g., "الٓر"). Capture its specific start and end timestamp completely separate from the next verse.
     `;
 
-    // We use Structured Outputs (responseSchema) to guarantee a flawless JSON response
-    const response = await generateContentWithRetry({
-      model: GEMINI_MODEL,
+    const response = await generateContentWithRetry((model) => ({
+      model,
       contents: [
         {
           inlineData: {
@@ -105,12 +124,11 @@ export async function POST(req: NextRequest) {
           required: ["ayahs"]
         }
       }
-    });
+    }));
 
     const responseText = response.text || '{"ayahs":[]}';
     const parsedData = JSON.parse(responseText);
 
-    // Process and attach the normalized text version for your matching engine
     const finalizedAyahs = parsedData.ayahs.map((ayah: any) => ({
       id: ayah.id,
       text: ayah.text,
@@ -119,18 +137,15 @@ export async function POST(req: NextRequest) {
       end: ayah.end_time
     }));
 
-    // SYNTHETIC WORDS ARRAY GENERATION
-    // Since Audio LLMs don't natively output per-word timestamps, we cleanly distribute 
-    // the uniform duration across words inside each ayah segment so your frontend doesn't crash!
     const syntheticWords: Array<{ word: string; start: number; end: number }> = [];
-    
+
     for (const ayah of finalizedAyahs) {
       const wordsInAyah = ayah.text.split(/\s+/).filter(Boolean);
       if (wordsInAyah.length === 0) continue;
-      
+
       const duration = ayah.end - ayah.start;
       const uniformDuration = duration / wordsInAyah.length;
-      
+
       wordsInAyah.forEach((w: string, idx: number) => {
         const cleaned = normalizeArabicWord(w);
         if (cleaned) {
@@ -143,7 +158,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Return the response structures that your frontend expects
     return NextResponse.json({
       success: true,
       segments: finalizedAyahs.map((a: any) => ({
@@ -159,10 +173,13 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     console.error('Gemini Routing Error:', error);
     const overloaded = isRetryableError(error);
+    const gone = isModelGoneError(error);
     return NextResponse.json(
       {
         error: overloaded
           ? 'The transcription service is temporarily overloaded. Please try again in a moment.'
+          : gone
+          ? 'All configured Gemini models are currently unavailable. Update MODEL_CANDIDATES in route.ts.'
           : 'Failed to process audio structure',
       },
       { status: overloaded ? 503 : 500 }
